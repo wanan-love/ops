@@ -509,3 +509,27 @@ Stage Summary:
 - 项目状态：稳定（20/20、lint 0、零溢出、零 console error、E2E 全绿、CI 预期绿）
 - 已知风险/未验证：①真实 Brother/HP 机型的 @PJL INFO SUPPLY 响应格式（公开资料未标准化，需抓包——客户端解析已宽容化但字段名可能不同）②PJL 状态码表是子集（各厂商 CODE 语义有差异，未知码返回 unknown 是正确行为但覆盖面待真机扩充）③RAW 9100 打印通道（发送数据打印）本轮未实现（仅探测；VENDOR_PROTOCOLS 7.1 建议默认关闭，作为后续可选）④Caddyfile 网关无需变更（:3067 仅本机测试用，不经网关暴露）
 - 下一阶段优先建议：①P5 厂商 MIB 解析包试点（HP/Lexmark 公开 MIB 私有 OID → 维修件计数增强，第二个 Vendor Adapter）②RAW 9100 打印通道（兜底「最后一公里」：PJL 探测成功且 IPP 不可用时的数据透传，默认关闭显式启用）③扫描亮度/对比度（eSCL Brightness/Contrast 透传 + vscan 渲染模拟）④Android/iOS 原生化（NsdManager + PJL 设置 UI）⑤真实硬件验证（含 PJL 真机 SUPPLY 抓包适配）
+
+---
+Task ID: 真实性红线轮（用户最高优先级清单 1-7 全项）
+Agent: main-agent
+Task: 修复平台显示错误（动态检测）/ Windows 真实打印机发现 / 清除正式产品虚拟打印机 / 能力诚实性修订 / 厂商真实实现研究 → 研究结论文档
+
+Work Log:
+- 状态判断：ops-host 实为 `bun --watch index.ts`（PID 1955，`pgrep 'bun index.ts'` 匹配不到导致误判死亡）；Next dev 已死需重启（`setsid nohup bun run dev > dev.log`）
+- 【平台动态检测】新建 src/core/runtime.ts：多信号运行时检测（①env.OS=Windows_NT/PROCESSOR_ARCHITECTURE 宿主信号（编译期内联不可能）②process.platform ③/proc/version 特征文件）+ platformLabel/isDevMode + runtimePlatformDetail 明细（信号链+os release/version/type）；hostInfo.platform/platformNote/discovery.selfInfo 全部改用；index.ts banner 新增「运行平台（运行时检测）」与「运行模式」行
+- 【availabilityNote 动态化】windows.ts/cups.ts/ipp-backend.ts 的 readonly 字符串（含「当前环境为 Linux」「当前沙箱环境」烘焙文案——Windows 运行时会错误显示 Linux 的根因）全部改为 getter 按运行时平台+探测状态生成；BackendManager.primaryBackend 无可用后端时返回 'none'（不再回退 mock）
+- 【OPS_DEV_MODE 正式/开发分离】host.ts：devMode = OPS_DEV_MODE==='1'（bun build 绝不内联）；vipp/vscan/vpjl 启用条件加 devMode &&；MockPrinterBackend 仅 devMode 注册；IPP staticPrinterIds 正式模式=[]（仅手动 URI/mDNS 路径）；printers.load() 不再自动 seed，loadFromDevMode() 显式调用；routes：POST /api/printers 与 /api/tests/run 正式模式 403；GET /api/printers 与 discovery selfInfo 正式模式过滤 virtual（防御性，不删数据）；index.ts --dev 参数；package.json dev 脚本注入 OPS_DEV_MODE=1
+- 【Windows 真实打印机发现】windows.ts listPrinters 重写为单次 Win32_Printer CIM 查询（Name/DriverName/PortName/Default/Shared/Local/Network/PrinterStatus/DetectedErrorState/WorkOffline/Comment/Location）；mapWin32Status 导出（WorkOffline→offline；DetectedErrorState 3/4 无纸→paper-out、8 卡纸→paper-jam、9 离线、7/10/11→error；PrinterStatus 3 idle/4,5 busy/6 stopped/7 offline；未知值如实带原始码）；getStatus 同步采用；printTextTestPage 同步改 runtime 检测
+- 【自动发现】新建 src/core/backend-autosync.ts（BackendAutoSync：1.5s 首同步+60s 周期；windows/cups available 才枚举；importFromBackend 幂等导入不覆盖用户 shared 选择；消失仅记事件不删除；isSystemDefault 随枚举实际值刷新）；HostContext.autoSync 装配；POST /api/backends/autosync 手动触发端点
+- 【能力诚实性】windows.ts maxCopies「保守 99」与 duplex 'both' 猜测值 → supportedCap(null)（确认支持但具体值 UNKNOWN，detail 写明 WMI 无该字段）；types.ts Capability 契约新增「supported+value=null」合法形态；cups parseLpstatPrinters/parseLpstatDefault 解析 lpstat -d 系统默认队列；BackendPrinterRef 扩展 isDefault/driverName/portName/statusHint；Printer/HostInfo（前后端）新增 isSystemDefault/devMode/platformRuntime
+- 【前端】overview-view：平台行含 os.version + 运行时检测信号块 + 运行模式行；printers-view：创建按钮/对话框 devMode 门控、空态文案分支、「系统默认」徽章（title 注明真实来源）；backends-view：「同步系统打印机」按钮（toast 如实报告不可用）+ Virtual IPP/PJL 卡 devMode 门控 + 底注更新；debug-view：SelfTestPanel devMode 门控；client.autosyncBackends()
+- 【研究】web-search 9 组检索（HP SNMP/PJL、Brother PJL SUPPLY、Epson StatusMonitor、Lexmark MIB、RFC 3805、Canon、Ricoh NDA、Windows DeviceCapabilities/DEVMODE、IPP PWG）→ docs/VENDOR_RESEARCH.md：六问结论速览 + 标准通道四节 + 九厂商证据分级表 + 墨量可读性矩阵 + 现行实现对齐检查 + 下一步按证据强度排序（P5 建议：①Windows DeviceCapabilities API（微软官方，驱动级 DC_PAPERS/DC_DUPLEX/DC_COPIES/DC_BINS）②HP 公开 MIB 适配器 ③Lexmark MIB ④Brother 真机抓包；不做：Epson 消费级/Ricoh NDA/Kyocera/KM 私有）
+- 【验收】20/20 自测（tr-mtpxtmt2-400）通过；正式模式独立实例（:3101/:3102 --data-dir /tmp）五项红线：devMode=false、backends 无 mock、打印机 0 台（无种子）、创建虚拟打印机 403、跑自测 403、autosync 如实报告 windows/cups 不可用；build-all.sh windows 成功，二进制检验（「当前环境为 Linux」「沙箱」「本演示」文案 0 处；DetectedErrorState×13、backend-autosync×2、OPS_DEV_MODE×11 在位）；agent-browser 经 :81：概览/打印机/打印后端/调试四页 + 393/1280 双视口零溢出 + 零 console error + 同步按钮 toast 交互验证；lint 0/0；git 388eb17 推送 main
+
+Stage Summary:
+- 交付：用户 7 项最高优先级全部落地——平台动态检测（多信号+信号链可见）、Windows Win32_Printer 真实枚举（含默认打印机/官方错误码状态）、正式模式虚拟设备清零（OPS_DEV_MODE 红线 + API 403 + 防御性隐藏）、系统打印机自动发现（60s 幂等同步）、能力猜测值清除（99/both→UNKNOWN）、九厂商证据研究文档（先研究后开发原则落地）
+- 设计要点：①运行时信号 > 编译期常量的优先级设计（env 宿主信号不可能被 bun build 内联，兜底防御交叉编译异常场景）②availabilityNote getter 化 = 访问时求值（而非类定义时烘焙）③虚拟设备隔离三层：不注册（后端）+ 不创建（种子）+ 不显示（API 过滤，存量数据不删除）④「supported+value=null」新合法形态：确认支持但具体值不可获取（WMI 位掩码场景的标准解法）
+- 项目状态：稳定（20/20、lint 0、零溢出、零 console error、正式模式红线全绿、CI 预期绿、已推送）
+- 已知风险/未验证：①Windows 真机全链路（Win32_Printer 枚举/PrintTo 提交/DetectedErrorState 状态）在本 Linux 沙箱无法执行——代码对齐微软官方文档语义，需真机验收 ②bun --target=windows-x64 的 process.platform 行为（Bun 文档应为 win32；多信号设计已兜底 env 信号优先）③autosync 60s 周期在打印机极多的机器上的 PowerShell 开销量（Win32_Printer 单查询已最小化进程数）④存量 dev 数据目录（17 台测试打印机）在正式模式会被隐藏但仍占磁盘——正式部署用全新 data-dir 即无此问题
+- 下一阶段优先建议（按 VENDOR_RESEARCH.md 证据强度）：①P5：Windows DeviceCapabilities API 适配（微软官方 wingdi.h：DC_PAPERS 纸型列表/DC_DUPLEX 翻转模式/DC_COPIES 真实上限/DC_BINS 纸盒——驱动级真实能力，比 WMI 位掩码精确）②P6：HP-LASERJET-COMMON-MIB 公开 MIB 适配器（维修件计数）③Brother PJL SUPPLY 真机抓包 ④真实 Windows 硬件验证轮 ⑤Android/iOS 原生化
