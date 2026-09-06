@@ -1,6 +1,8 @@
 import type { HostContext } from '../host'
 import type { DiscoveredIpPrinter, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
+import { probePjlStatus, probePjlSupply } from '../backends/pjl'
+import { connect } from 'node:net'
 import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
 
 /**
@@ -209,6 +211,18 @@ export interface ScenarioApi {
   setConsoleAuth(enabled: boolean): Promise<void>
   /** 读取当前控制台令牌（启用态；禁用态 null） */
   consoleToken(): string | null
+  // ---- PJL over RAW 9100（P4 · Vendor Adapter 试点）----
+  /** Virtual PJL Printer 是否启用（OPS_VPJL_ENABLED=0 时 false → 场景 skipped） */
+  vpjlAvailable(): boolean
+  /** 直连 PJL 探测（不经 REST/路由层：客户端单元级，INFO STATUS + INFO SUPPLY） */
+  pjlDirectProbe(port: number): Promise<{
+    status: { ok: boolean; status: string | null; rawCode: string | null; display: string | null }
+    supply: { ok: boolean; levelPct: number | null }
+  }>
+  /** 向 Virtual PJL 发送原始字节（UEL 包裹的数据段 → 验证 RAW 字节累计） */
+  pjlSendRaw(data: string): Promise<void>
+  /** 轮询等待打印机满足状态条件（IPP 后端状态同步 5s 轮询恢复等；超时抛 ScenarioFailure） */
+  waitForPrinterStatus(printerId: string, predicate: (printer: Printer) => boolean, timeoutMs?: number): Promise<Printer>
 }
 
 export class ScenarioFailure extends Error {
@@ -442,6 +456,44 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
     },
     consoleToken() {
       return ctx.settings.consoleToken()
+    },
+    // ---- PJL over RAW 9100（P4 · Vendor Adapter 试点）----
+    vpjlAvailable() {
+      return ctx.vpjl !== null
+    },
+    async pjlDirectProbe(port) {
+      const opts = { host: '127.0.0.1', port, timeoutMs: 1500 }
+      const [status, supply] = await Promise.all([probePjlStatus(opts), probePjlSupply(opts)])
+      const level = supply.ok ? (supply.report.consumables.value?.[0]?.levelPct ?? null) : null
+      return {
+        status: { ok: status.ok, status: status.status, rawCode: status.rawCode, display: status.display },
+        supply: { ok: supply.ok, levelPct: level },
+      }
+    },
+    pjlSendRaw(data) {
+      return new Promise<void>((resolve, reject) => {
+        const socket = connect({ host: '127.0.0.1', port: ctx.vpjl?.port ?? 3067 })
+        socket.on('error', reject)
+        socket.on('connect', () => {
+          socket.end(data, 'latin1', () => resolve())
+        })
+        setTimeout(() => {
+          socket.destroy()
+          resolve()
+        }, 2000).unref?.()
+      })
+    },
+    async waitForPrinterStatus(printerId, predicate, timeoutMs = 12000) {
+      const startedAt = Date.now()
+      for (;;) {
+        const printer = ctx.printers.get(printerId)
+        if (!printer) throw new ScenarioFailure(`打印机不存在：${printerId}`)
+        if (predicate(printer)) return printer
+        if (Date.now() - startedAt > timeoutMs) {
+          throw new ScenarioFailure(`等待打印机状态超时（${timeoutMs}ms，当前 ${printer.status}）`)
+        }
+        await new Promise((r) => setTimeout(r, 500))
+      }
     },
   }
 }

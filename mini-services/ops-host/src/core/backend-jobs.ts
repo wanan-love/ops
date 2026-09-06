@@ -225,7 +225,7 @@ export class BackendJobRunner {
         return
       }
       this.pollFailures.delete(jobId)
-      this.applyBackendStatus(job, printer, status)
+      await this.applyBackendStatus(job, printer, status)
     } catch (err) {
       const job = this.deps.jobs.get(jobId)
       if (job) this.recordPollFailure(job, err instanceof Error ? err.message : String(err))
@@ -249,7 +249,7 @@ export class BackendJobRunner {
     }
   }
 
-  private applyBackendStatus(job: PrintJob, printer: Printer, status: BackendJobStatus): void {
+  private async applyBackendStatus(job: PrintJob, printer: Printer, status: BackendJobStatus): Promise<void> {
     switch (status.state) {
       case 'completed': {
         job.printedSheets = status.sheetsDone ?? job.sheetsTotal
@@ -262,26 +262,24 @@ export class BackendJobRunner {
             this.deps.jobs.pushProgressMilestone(job, Math.min(m * 25, 100))
           }
         }
-        this.deps.jobs.setState(job, 'completed', status.message ?? `后端打印完成（${job.printedSheets} 张）`)
-        void this.deps.jobs.writeResult(job, 'success', `真实后端打印完成（${printer.backend} job ${job.backendJobId}）`)
         printer.stats.completed += 1
         printer.stats.sheets += job.printedSheets
         this.releasePrinter(printer)
+        // 终态顺序保证（竞态修复）：result.json 先落盘、completed 后广播
+        await this.deps.jobs.finish(job, 'completed', status.message ?? `后端打印完成（${job.printedSheets} 张）`, `真实后端打印完成（${printer.backend} job ${job.backendJobId}）`)
         return
       }
       case 'failed': {
         job.error = status.message ?? `后端任务失败（${printer.backend} job ${job.backendJobId}）`
-        this.deps.jobs.setState(job, 'failed', job.error)
-        void this.deps.jobs.writeResult(job, 'failed', job.error)
         printer.stats.failed += 1
         this.releasePrinter(printer)
+        await this.deps.jobs.finish(job, 'failed', job.error, job.error)
         return
       }
       case 'cancelled': {
-        this.deps.jobs.setState(job, 'cancelled', status.message ?? '后端任务已取消')
-        void this.deps.jobs.writeResult(job, 'cancelled', '后端任务已取消')
         printer.stats.cancelled += 1
         this.releasePrinter(printer)
+        await this.deps.jobs.finish(job, 'cancelled', status.message ?? '后端任务已取消', '后端任务已取消')
         return
       }
       case 'paused': {

@@ -20,6 +20,7 @@ import { WindowsPrinterBackend } from './backends/windows'
 import { BackendJobRunner, BackendStatusSync } from './core/backend-jobs'
 import { VirtualIppServer } from './vipp/server'
 import { VirtualScanServer } from './vscan/server'
+import { VirtualPjlServer } from './vpjl/server'
 import { ScanManager } from './core/scan'
 import { MdnsService } from './discovery/mdns'
 
@@ -41,6 +42,8 @@ export interface HostContext {
   vipp: VirtualIppServer | null
   /** Virtual eSCL Scanner（OPS_VSCAN_ENABLED=0 或启动失败时为 null） */
   vscan: VirtualScanServer | null
+  /** Virtual PJL Printer（RAW 9100 仿真；OPS_VPJL_ENABLED=0 或启动失败时为 null） */
+  vpjl: VirtualPjlServer | null
   /** 扫描域管理器（P3 · eSCL：设备/任务/页面图像） */
   scan: ScanManager
   /** 真实后端任务执行器（backend !== 'mock' 的打印机） */
@@ -149,6 +152,22 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     }
   }
 
+  // ---------------------------------------------------------------- Virtual PJL Printer（RAW 9100 仿真，P4 Vendor Adapter 试点）
+  const vpjlEnabled = process.env.OPS_VPJL_ENABLED !== '0'
+  const vpjlPort = Number(process.env.OPS_VPJL_PORT ?? 3067) || 3067
+  const vpjlDataDir = process.env.OPS_VPJL_DATA_DIR ?? resolve(dataDir, '..', 'virtual-pjl')
+  let vpjl: VirtualPjlServer | null = null
+  if (vpjlEnabled) {
+    vpjl = new VirtualPjlServer({ port: vpjlPort, dataDir: vpjlDataDir })
+    try {
+      await vpjl.start()
+    } catch (err) {
+      console.error('[ops-host] Virtual PJL Printer 启动失败（继续以无 vpjl 模式运行）：', err)
+      log.record({ type: 'host', topic: 'vpjl', message: `Virtual PJL Printer 启动失败：${err instanceof Error ? err.message : String(err)}` })
+      vpjl = null
+    }
+  }
+
   // ---------------------------------------------------------------- 统一后端
   const ippBackend = new IPPPrinterBackend({
     baseUri: `ipp://localhost:${vippPort}`,
@@ -188,6 +207,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     backends,
     vipp,
     vscan,
+    vpjl,
     scan,
     runner,
     statusSync,
@@ -219,6 +239,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         dataDir,
         vippTlsPort: vipp?.tlsActivePort ?? null,
         vscanPort: vscan?.port ?? null,
+        vpjlPort: vpjl?.port ?? null,
       }
     },
     restartSimulated(): void {

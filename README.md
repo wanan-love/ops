@@ -2,10 +2,10 @@
 
 > 跨平台局域网共享打印机 — 设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 设备自动发现并打印。
 
-[![Release](https://img.shields.io/badge/release-v0.4.1--cross--platform-emerald)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.2--cross--platform-emerald)](../../releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
 [![Backend](https://img.shields.io/badge/print%20backends-IPP%20%7C%20CUPS%20%7C%20Windows-teal)](#打印后端)
-[![Self-Test](https://img.shields.io/badge/self--test-19%2F19%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
+[![Self-Test](https://img.shields.io/badge/self--test-20%2F20%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
 
 > 📖 **新用户从零开始**：安装、配置、共享打印机、客户端打印、故障排查——见完整使用指南 **[docs/USAGE.md](docs/USAGE.md)**。
 
@@ -20,6 +20,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 - **ipps:// TLS**：加密 IPP 传输，自签名证书自动容忍（TOFU）
 - **eSCL 扫描**：AirScan 标准扫描协议（mDNS `_uscan` 发现 · PNG 多页 · 实时进度 · 按需导出 A4 PDF · 双面扫描 v0.4.1：能力三态探测 + Feeder 正反交替页序）
 - **控制台鉴权（v0.4.0）**：管理面访问令牌（REST + WebSocket 握手校验；三通道传递 header/Bearer/`?opsToken=`）；与设备配对轴独立的两轴安全模型；令牌落盘防锁定；协议仿真端口豁免兼容真实客户端
+- **PJL over RAW 9100（v0.4.2，首个 Vendor Adapter 试点）**：双向状态/耗材回读（UEL 包裹的 `@PJL INFO STATUS/SUPPLY` 查询 · CODE 子集映射不猜测 · Virtual PJL Printer :3067 仿真 · 默认关闭需显式启用）；通道优先级 IPP → SNMP → PJL 兜底，面向 Brother/HP 等 SNMP 缺失的消费级机型
 - **客户端尽量无需安装厂商驱动**，实际打印使用 Host（设备 A）上已安装的系统打印机与驱动
 - 切换真实打印机时，仅替换 Printer Backend，**Core / 协议 / 队列 / UI 零改动**
 
@@ -33,6 +34,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 | **CupsPrinterBackend** | 代码完备，待 CUPS 宿主验证 | lpstat/lp CLI + ipp://localhost:631，macOS/Linux |
 | **WindowsPrinterBackend** | 代码完备，待 Windows 宿主验证 | PowerShell Get-Printer/Get-PrintJob/Win32_Printer + PrintTo |
 | SNMP 耗材/状态探测 | 代码完备，待真实设备验证 | 自研 RFC 1157 BER 编解码：Printer-MIB prtMarkerSuppliesLevel（耗材）+ HOST-RESOURCES hrPrinterDetectedErrorState（缺纸/卡纸/门开位掩码，状态二级来源）；community 可配置（设置页） |
+| PJL over 9100 探测（P4 试点） | ✔ 通过 Virtual PJL :3067 全链路验证，待真机抓包适配 | 自研 PJL 客户端：UEL 包裹 `@PJL INFO STATUS/SUPPLY` 双向回读 → VENDOR_API 来源融合（优先级 IPP→SNMP→PJL；未知 CODE 不猜测；默认关闭显式启用） |
 | mDNS/Bonjour 发现 | ✔ 本机回环验证 | 自研 RFC 6762/6763 UDP 组播（_ipp._tcp 浏览 + 自通告） |
 
 > 开发/测试用的 MockPrinterBackend 见[开发与测试环境](#开发与测试环境mock--virtual)（仅限单元测试 / 集成测试 / CI / 开发环境，非产品功能）。
@@ -196,11 +198,12 @@ mini-services/ops-host/data/mock-printer/
 ├── mini-services/ops-host/        # Host 守护进程（独立 Bun 项目，打包入口 index.ts）
 │   ├── index.ts                   # CLI（--port/--web/--data-dir/--version）
 │   ├── src/core/                  # types/storage/printers/jobs/engine/pairing/discovery/scan
-│   ├── src/backends/              # ipp(自研 RFC 8010/8011) / escl(自研 eSCL) / cups / windows / mock / snmp
+│   ├── src/backends/              # ipp(自研 RFC 8010/8011) / escl(自研 eSCL) / pjl(自研 PJL over 9100) / cups / windows / mock / snmp
 │   ├── src/vipp/                  # Virtual IPP Server（开发/测试工具）
 │   ├── src/vscan/                 # Virtual eSCL Scanner（开发/测试工具，:3065）
+│   ├── src/vpjl/                  # Virtual PJL Printer（开发/测试工具，RAW 9100，:3067）
 │   ├── src/http/  src/ws/         # REST 路由（含静态 Web 服务）+ socket.io 实时层
-│   └── src/tests/                 # 19 场景自动化测试
+│   └── src/tests/                 # 20 场景自动化测试
 ├── clients/                       # 原生客户端
 │   ├── android/                   # WebView 壳（Kotlin/Gradle，连接局域网 Host）
 │   └── ios/                       # SwiftUI WKWebView 壳（Xcode 工程可直接 Build/Archive）
@@ -241,7 +244,8 @@ mini-services/ops-host/data/mock-printer/
 
 - `Virtual IPP Server`：本地 IPP 模拟服务（真实 RFC 8010/8011 二进制协议，明文 :3061 + TLS :3063 自签证书），供 CI/开发环境验证 IPPPrinterBackend 全链路（含 ipps）；四档能力档案用于测试能力三态模型（详见上表）。
 - `Virtual eSCL Scanner`：本地 eSCL 模拟扫描服务（HTTP + XML，:3065，vscan-flatbed 平板单页 / vscan-adf 送稿器多页，纯手写 PNG），供 CI/开发环境验证扫描全链路（含 mDNS `_uscan._tcp` 自通告）。
-- 自动化测试（19 场景：10 Mock + 1 控制台鉴权 + 5 IPP/mDNS（含 ipps TLS）+ 3 eSCL 扫描（全链路 + PDF 导出 + 双面），含 Host 重启任务恢复）：`POST /api/tests/run` 或 Web 控制台「调试 · 开发测试」页一键运行，报告落盘 `test-runs/`。
+- `Virtual PJL Printer`：本地 RAW 9100 模拟服务（TCP 字节流，:3067，UEL/@PJL INFO STATUS/SUPPLY/CONFIG/PAGECOUNT 回读 + 9 状态注入 + RAW 字节累计），供 CI/开发环境验证 P4 Vendor Adapter PJL 双向探测全链路（`OPS_VPJL_ENABLED=0` 可关闭）。
+- 自动化测试（20 场景：10 Mock + 1 控制台鉴权 + 5 IPP/mDNS（含 ipps TLS）+ 3 eSCL 扫描（全链路 + PDF 导出 + 双面）+ 1 PJL over 9100（P4 Vendor Adapter），含 Host 重启任务恢复）：`POST /api/tests/run` 或 Web 控制台「调试 · 开发测试」页一键运行，报告落盘 `test-runs/`。
 
 ## 平台支持矩阵
 
@@ -277,8 +281,9 @@ docker compose up -d        # web :3000 + host :3001/:3002 + caddy 网关 :80
 - [x] 11. 跨平台打包（单文件可执行 + .deb/.AppImage/.msi/.dmg/.apk + CI 自动构建发布）
 - [x] 12. eSCL 扫描全链路（P3 · v0.3.2：自研 eSCL 客户端 HTTP+XML + mDNS `_uscan._tcp` 发现 + Virtual eSCL Scanner :3065 + 前端扫描 tab + 实时任务/取消/多页；PDF 合成 ✔ v0.3.3 按需导出；双面扫描 ✔ v0.4.1 Duplex 能力三态 + 正反交替页序 + 场景 19）
 - [x] 15. Host 控制台鉴权（P2 安全轮 · v0.4.0：管理面令牌 REST/WS 全覆盖 + 解锁界面 + 防锁定落盘 + 令牌重生成/旧值立即失效 + 场景 18 自动化验证；与设备配对轴独立的两轴模型）
-- [ ] 13. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS 真机证书校验 / eSCL 真实扫描仪）
-- [ ] 14. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐）
+- [x] 16. PJL over RAW 9100 双向探测（P4 · v0.4.2 首个 Vendor Adapter 试点：自研 PJL 客户端 UEL/@PJL INFO 回读 + Virtual PJL Printer :3067 + 设置页开关/端口 + VENDOR_API 融合 + 场景 20；通道优先级 IPP→SNMP→PJL，默认关闭安全默认）
+- [ ] 13. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS 真机证书校验 / eSCL 真实扫描仪 / PJL 真机 SUPPLY 格式抓包适配）
+- [ ] 14. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐；P4 PJL ✔ v0.4.2 首个试点落地）
 
 ## License
 

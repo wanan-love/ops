@@ -63,7 +63,7 @@ Host 与 Client 之间的通信协议。REST（JSON）用于命令与查询，We
 | POST | `/api/pairing/requests/{id}/reject` | 拒绝 |
 | GET | `/api/pairing/status?deviceId=` | 设备侧轮询（批准后领取令牌） |
 | GET | `/api/devices` / DELETE `/api/devices/{deviceId}` | 已配对设备管理 |
-| GET/PATCH | `/api/settings` | `{hostName?, securityMode?}`（open/pairing） |
+| GET/PATCH | `/api/settings` | `{hostName?, securityMode?, snmpCommunity?, pjlProbeEnabled?, pjlPort?}`（PJL 探测默认关闭，端口真实设备 9100） |
 
 ### Mock / 调试（Virtual Printer 注入点）
 
@@ -79,6 +79,13 @@ Host 与 Client 之间的通信协议。REST（JSON）用于命令与查询，We
 | GET | `/api/debug/sample-pdf?pages=2` | 生成示例 PDF |
 | POST | `/api/debug/restart` | 模拟 Host 重启（磁盘恢复） |
 | POST | `/api/storage/clear-test-data` | 清理 TEST 打印机/任务/测试报告 |
+
+### Virtual PJL Printer（P4 · RAW 9100 仿真调试）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/vpjl/state` | 设备快照 `{condition, rawReceivedBytes, rawPageCount, connectionCount, updatedAt}` |
+| POST | `/api/vpjl/condition` | `{condition: ready\|busy\|warmup\|offline\|paper-out\|paper-jam\|door-open\|toner-low\|toner-empty}`（注入 @PJL INFO STATUS 的 CODE / SUPPLY 的碳粉联动） |
 
 ### 事件 / 自动化测试
 

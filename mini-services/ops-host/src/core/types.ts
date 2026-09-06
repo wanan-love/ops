@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.4.1'
+export const OPS_VERSION = '0.4.2'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -54,6 +54,8 @@ export interface CapabilityProbe {
   ok: boolean
   durationMs: number
   error?: string
+  /** 成功时的补充信息（如 PJL 回读的原始 CODE；可选，仅诊断展示用） */
+  detail?: string
   at: string
 }
 
@@ -217,6 +219,12 @@ export interface HostSettings {
   securityMode: 'open' | 'pairing'
   /** SNMP v1/v2c community 字符串（耗材/状态探测用；企业机型常改为非默认值） */
   snmpCommunity?: string
+  /** PJL over RAW 9100 双向状态/耗材探测（P4 Vendor Adapter 试点）。
+   *  默认关闭（VENDOR_PROTOCOLS.md 安全默认：9100 通道显式启用）；
+   *  仅在 IPP/SNMP 未读到时补充（merge 来源优先级 VENDOR_API < SNMP < IPP）。 */
+  pjlProbeEnabled?: boolean
+  /** PJL 探测目标端口（真实设备通用 9100；测试环境可指向 Virtual PJL :3067） */
+  pjlPort?: number
   /** 控制台访问控制（P2 安全轮：REST/WS 管理面令牌；与设备配对轴相互独立）
    *  - enabled=false 时 token 恒为 null（启用时总是生成全新令牌，避免禁用期间的旧值泄露）
    *  - token 仅在启用期间存在（settings.json 持久化，Host 重启后仍有效）
@@ -348,6 +356,8 @@ export interface HostInfo {
   vippTlsPort?: number | null
   /** Virtual eSCL Scanner 端口（null = 未启用；开发/测试用） */
   vscanPort?: number | null
+  /** Virtual PJL Printer（RAW 9100 仿真）端口（null = 未启用；开发/测试用） */
+  vpjlPort?: number | null
 }
 
 // ---------------------------------------------------------------- 扫描（P3 · eSCL）

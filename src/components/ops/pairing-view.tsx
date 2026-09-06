@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { BadgeCheck, Copy, Eye, EyeOff, Fingerprint, KeyRound, Link2, Link2Off, Loader2, Lock, LockOpen, MonitorSmartphone, Radio, RefreshCcw, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
+import { BadgeCheck, Cable, Copy, Eye, EyeOff, Fingerprint, KeyRound, Link2, Link2Off, Loader2, Lock, LockOpen, MonitorSmartphone, Radio, RefreshCcw, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -211,6 +211,51 @@ export function PairingView() {
     }
   }
 
+  // PJL over RAW 9100 双向探测（P4 Vendor Adapter 试点；默认关闭需显式启用，见 VENDOR_PROTOCOLS.md 安全默认）
+  const [pjlPortDraft, setPjlPortDraft] = useState('')
+  const [pjlPortDirty, setPjlPortDirty] = useState(false)
+  const [pjlPortSaving, setPjlPortSaving] = useState(false)
+  const [pjlToggling, setPjlToggling] = useState(false)
+  useEffect(() => {
+    if (!pjlPortDirty && settings) setPjlPortDraft(String(settings.pjlPort ?? 9100))
+  }, [settings, pjlPortDirty])
+
+  const togglePjlProbe = async (enabled: boolean) => {
+    setPjlToggling(true)
+    try {
+      await client.updateSettings({ pjlProbeEnabled: enabled })
+      await refresh()
+      toast.success(enabled ? 'PJL 探测已启用' : 'PJL 探测已关闭', {
+        description: enabled
+          ? '下次「刷新能力」时将向打印机 RAW 端口发送 @PJL INFO 查询（IPP → SNMP → PJL 兜底）'
+          : 'VENDOR_API 来源不再探测（安全默认）',
+      })
+    } catch (e) {
+      toast.error('设置失败', { description: (e as Error).message })
+    } finally {
+      setPjlToggling(false)
+    }
+  }
+
+  const savePjlPort = async () => {
+    const n = Number(pjlPortDraft.trim())
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      toast.error('PJL 端口无效', { description: '需为 1-65535 整数（真实设备通用 9100）' })
+      return
+    }
+    setPjlPortSaving(true)
+    try {
+      await client.updateSettings({ pjlPort: n })
+      setPjlPortDirty(false)
+      await refresh()
+      toast.success('PJL 探测端口已保存', { description: `下次「刷新能力」时连接 ${n} 端口（真实设备通用 9100）` })
+    } catch (e) {
+      toast.error('保存失败', { description: (e as Error).message })
+    } finally {
+      setPjlPortSaving(false)
+    }
+  }
+
   const myRequestPending = requesting || pendingRequests.some((r) => r.deviceId === device.deviceId)
 
   return (
@@ -322,6 +367,73 @@ export function PairingView() {
           <p className="text-[11px] leading-relaxed text-muted-foreground/70">
             企业级打印机（Ricoh / Kyocera / KM / Xerox 等）常将 SNMP community 改为非默认值；修改后到打印机页「刷新能力」即可用新值重试探测。
             读取不到时墨量显示 UNKNOWN（不代表不支持），详见故障排查文档。
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Cable className="size-4 text-muted-foreground" aria-hidden />
+            PJL 探测设置（RAW 9100）
+            {settings?.pjlProbeEnabled === true ? (
+              <Badge variant="outline" className="gap-1 border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                已启用
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-zinc-400" aria-hidden />
+                默认关闭
+              </Badge>
+            )}
+            <Badge variant="secondary" className="font-mono text-[10px]">P4 · Vendor Adapter 试点</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between rounded-md border px-3 py-2.5">
+            <div className="min-w-0">
+              <Label htmlFor="pjl-probe" className="cursor-pointer">
+                启用 PJL 双向回读（@PJL INFO 状态 / 耗材）
+              </Label>
+              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                向打印机 RAW 端口发送查询（连接即发、超时 900ms）
+              </p>
+            </div>
+            <Switch
+              id="pjl-probe"
+              checked={settings?.pjlProbeEnabled === true}
+              onCheckedChange={(v) => void togglePjlProbe(v)}
+              disabled={pjlToggling}
+              aria-label="启用 PJL over RAW 9100 探测"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pjl-port">RAW 端口（真实设备通用 9100）</Label>
+            <div className="flex gap-2">
+              <Input
+                id="pjl-port"
+                value={pjlPortDraft}
+                onChange={(e) => {
+                  setPjlPortDraft(e.target.value.replace(/\D/g, '').slice(0, 5))
+                  setPjlPortDirty(true)
+                }}
+                inputMode="numeric"
+                placeholder="9100"
+                className="min-w-0 flex-1 font-mono text-xs"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <Button className="shrink-0" onClick={() => void savePjlPort()} disabled={pjlPortSaving || !pjlPortDirty || Number(pjlPortDraft) === (settings?.pjlPort ?? 9100)}>
+                {pjlPortSaving ? '保存中…' : '保存'}
+              </Button>
+            </div>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+            Brother / HP 等品牌的消费级机型 SNMP 常缺失/禁用，但 RAW 9100（1992 年 HP JetDirect 发明、事实上的打印通用端口）是双向字节流，
+            可用 <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">@PJL INFO STATUS / SUPPLY</code> 回读状态与耗材。
+            通道优先级 <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">IPP → SNMP → PJL</code>（仅在前面来源未读到时补充；CODE 无法映射的未知状态不猜测）。
+            默认关闭是安全默认（避免与在用打印通道互扰）；<span className="text-foreground/80">@PJL INFO SUPPLY 为 Brother 风格试点格式，真实机型响应需抓包适配</span>。
           </p>
         </CardContent>
       </Card>

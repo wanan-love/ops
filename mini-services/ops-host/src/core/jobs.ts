@@ -138,6 +138,16 @@ export class JobManager {
     this.log.job(job, message ?? `任务 ${job.fileName} → ${state}`, { reason })
   }
 
+  /** 终态顺序保证（竞态修复）：result.json 先落盘、再 setState 广播。
+   *  此前 setState( 'completed' ) 先于 void writeResult —— 全量自测负载下 waitFor 看到 completed 的瞬间
+   *  result.json 可能尚未写完（fire-and-forget 异步写滞后），artifactExists 断言偶发失败。
+   *  语义：终态可见 = 工件齐备。endedAt 预置（writeResult 的 durationMs 需要；setState 会再刷新一次）。 */
+  async finish(job: PrintJob, state: 'completed' | 'failed' | 'cancelled', message: string, resultMessage: string): Promise<void> {
+    job.endedAt = nowIso()
+    await this.writeResult(job, state === 'completed' ? 'success' : state, resultMessage)
+    this.setState(job, state, message)
+  }
+
   pushProgressMilestone(job: PrintJob, progress: number): void {
     this.pushTimeline(job, { type: 'progress', progress, message: `进度 ${progress}%` })
     void this.saveJob(job, true)

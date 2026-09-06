@@ -34,6 +34,8 @@ export interface CapabilityProbe {
   ok: boolean
   durationMs: number
   error?: string
+  /** 成功时的补充信息（如 PJL 回读的原始 CODE；可选，仅诊断展示用） */
+  detail?: string
   at: string
 }
 
@@ -168,6 +170,8 @@ export interface HostInfo {
   vscanPort?: number | null
   /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
   vippTlsPort?: number | null
+  /** Virtual PJL Printer（RAW 9100 仿真）端口（null = 未启用；开发/测试用） */
+  vpjlPort?: number | null
 }
 
 export interface HostSettings {
@@ -175,6 +179,10 @@ export interface HostSettings {
   hostName: string
   securityMode: 'open' | 'pairing'
   snmpCommunity?: string
+  /** PJL over RAW 9100 双向探测（P4 Vendor Adapter 试点；默认关闭需显式启用） */
+  pjlProbeEnabled?: boolean
+  /** PJL 探测目标端口（真实设备通用 9100；测试环境 Virtual PJL :3067） */
+  pjlPort?: number
   /** 控制台访问控制（P2 安全轮：管理面令牌，与设备配对轴独立）
    *  token 仅在启用态非空（需已通过鉴权才能读到；禁用态为 null） */
   consoleAuth?: { enabled: boolean; token: string | null }
@@ -297,7 +305,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.4.1'
+export const OPS_VERSION = '0.4.2'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',

@@ -56,11 +56,17 @@ export class SettingsStore {
   }
 
   /** 部分更新：仅覆盖显式传入的字段（未传字段保持原值——历史 bug 曾把 undefined 混入导致 hostName/snmpCommunity 被抹掉） */
-  async patch(patch: Partial<Pick<HostSettings, 'hostName' | 'securityMode' | 'snmpCommunity'>>): Promise<HostSettings> {
+  async patch(patch: Partial<Pick<HostSettings, 'hostName' | 'securityMode' | 'snmpCommunity' | 'pjlProbeEnabled' | 'pjlPort'>>): Promise<HostSettings> {
     const next: HostSettings = { ...this.settings }
     if (patch.hostName !== undefined) next.hostName = patch.hostName
     if (patch.securityMode !== undefined) next.securityMode = patch.securityMode
     if (patch.snmpCommunity !== undefined) next.snmpCommunity = patch.snmpCommunity
+    if (patch.pjlProbeEnabled !== undefined) next.pjlProbeEnabled = patch.pjlProbeEnabled === true
+    if (patch.pjlPort !== undefined) {
+      // 1-65535 整数（真实设备 9100；测试环境 Virtual PJL 3067）。非法值不改（路由层已 400，此处兜底）
+      const p = Math.floor(Number(patch.pjlPort))
+      next.pjlPort = Number.isFinite(p) && p >= 1 && p <= 65535 ? p : 9100
+    }
     this.settings = next
     await this.storage.writeJson(REL, this.settings)
     return this.get()

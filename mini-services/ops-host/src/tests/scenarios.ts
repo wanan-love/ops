@@ -3,6 +3,7 @@ import type { PrintJob, ScenarioResult, TestStep } from '../core/types'
 import { makeApi, ScenarioFailure, ScenarioSkipped, type ScenarioApi } from './selftest'
 import { ippScenarios } from './scenarios-ipp'
 import { scanScenarios } from './scenarios-scan'
+import { pjlScenarios } from './scenarios-pjl'
 
 /**
  * 10 个内置自动化场景（对应“Mock Printer 自动化测试”需求）：
@@ -25,6 +26,9 @@ import { scanScenarios } from './scenarios-scan'
  *
  * P3.5 追加（scenarios-scan.ts）：
  * 17. scan-pdf-export —— 扫描 PDF 按需导出（多页 PNG → A4 合成，幂等缓存）
+ *
+ * P4 追加（scenarios-pjl.ts，首个 Vendor Adapter 试点）：
+ * 20. pjl-vendor-probe —— PJL over RAW 9100 双向探测（Virtual PJL :3067 → 状态/耗材回读 → VENDOR_API 融合）
  */
 export type ScenarioId =
   | 'normal-print'
@@ -46,6 +50,7 @@ export type ScenarioId =
   | 'scan-pdf-export'
   | 'escl-duplex'
   | 'console-auth'
+  | 'pjl-vendor-probe'
 
 interface Scenario {
   id: ScenarioId
@@ -336,7 +341,7 @@ function durationMs(job: PrintJob): number {
 }
 
 export function scenarioMeta(): Array<{ id: string; name: string; description: string }> {
-  return [...scenarios, ...ippScenarios, ...scanScenarios].map(({ id, name, description }) => ({ id, name, description }))
+  return [...scenarios, ...ippScenarios, ...scanScenarios, ...pjlScenarios].map(({ id, name, description }) => ({ id, name, description }))
 }
 
 export async function runScenarios(
@@ -350,6 +355,7 @@ export async function runScenarios(
     ...scenarios,
     ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
     ...scanScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
+    ...pjlScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
   ]
   for (const scenario of all) {
     if (!ids.includes(scenario.id)) continue

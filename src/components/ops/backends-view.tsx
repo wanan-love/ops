@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { CircleCheck, CircleHelp, CircleX, Download, Link2, Lock, Network, Plus, RefreshCw, RadioTower, ScanSearch, ServerCog, Globe, FileDown } from 'lucide-react'
+import { CircleCheck, CircleHelp, CircleX, Cable, Download, Link2, Lock, Network, Plus, RefreshCw, RadioTower, ScanSearch, ServerCog, Globe, FileDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
 import { BackendBadge, EmptyState, formatTime } from './widgets'
-import type { DiscoveredIpPrinter, VippInfo } from '@/lib/ops/client'
+import type { DiscoveredIpPrinter, VippInfo, VpjlState } from '@/lib/ops/client'
 import type { BackendStatus } from '@/lib/ops/types'
 import type { TabValue } from './ops-app'
 
@@ -23,12 +23,53 @@ const VIPP_PROFILE_DESC: Record<string, string> = {
   Minimal: '只暴露 printer-state + printer-name，其余能力全 UNKNOWN——验证最吝啬设备',
 }
 
+/** Virtual PJL 调试状态注入清单（key = 后端 VpjlCondition；label/code/hint 前端展示） */
+const PJL_CONDITIONS: Array<{ key: string; label: string; hint: string }> = [
+  { key: 'ready', label: '就绪', hint: 'CODE 10001 → online（READY）' },
+  { key: 'busy', label: '打印中', hint: 'CODE 10004 → busy（PRINTING）' },
+  { key: 'warmup', label: '预热', hint: 'CODE 10003 → online（WARMING UP，不改状态）' },
+  { key: 'offline', label: '离线', hint: 'CODE 10002 → offline' },
+  { key: 'paper-out', label: '缺纸', hint: 'CODE 40014 → paper-out（状态融合验证）' },
+  { key: 'paper-jam', label: '卡纸', hint: 'CODE 40019 → paper-jam' },
+  { key: 'door-open', label: '门开', hint: 'CODE 40017 → error（DOOR OPEN）' },
+  { key: 'toner-low', label: '碳粉低', hint: 'CODE 40036 → 耗材 8%（不映射状态——耗材域）' },
+  { key: 'toner-empty', label: '碳粉尽', hint: 'CODE 40037 → 耗材 0%' },
+]
+
+const PJL_CONDITION_LABEL: Record<string, string> = {
+  ready: '就绪',
+  busy: '打印中',
+  warmup: '预热中',
+  offline: '离线',
+  'paper-out': '缺纸',
+  'paper-jam': '卡纸',
+  'door-open': '盖板开启',
+  'toner-low': '碳粉低',
+  'toner-empty': '碳粉尽',
+}
+
+const PJL_CONDITION_CODE: Record<string, string> = {
+  ready: '10001',
+  busy: '10004',
+  warmup: '10003',
+  offline: '10002',
+  'paper-out': '40014',
+  'paper-jam': '40019',
+  'door-open': '40017',
+  'toner-low': '40036',
+  'toner-empty': '40037',
+}
+
 export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
   const client = useOpsClient()
   const printers = useOpsStore((s) => s.printers)
   const refresh = useOpsStore((s) => s.refresh)
+  const hostInfo = useOpsStore((s) => s.hostInfo)
+  const vpjlPort = hostInfo?.vpjlPort ?? 3067
   const [backends, setBackends] = useState<BackendStatus[] | null>(null)
   const [vipp, setVipp] = useState<VippInfo | null>(null)
+  const [vpjl, setVpjl] = useState<VpjlState | null>(null)
+  const [pjlBusy, setPjlBusy] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [mdnsPrinters, setMdnsPrinters] = useState<DiscoveredIpPrinter[] | null>(null)
   const [uri, setUri] = useState('')
@@ -37,9 +78,10 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
 
   const loadStatus = useCallback(async () => {
     try {
-      const [b, v] = await Promise.all([client.backends(), client.vippPrinters()])
+      const [b, v, j] = await Promise.all([client.backends(), client.vippPrinters(), client.vpjlState().catch(() => null)])
       setBackends(b.backends)
       setVipp(v)
+      setVpjl(j?.state ?? null)
     } catch {
       /* 静默重试 */
     }
@@ -76,6 +118,22 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
       toast.error('扫描失败', { description: (e as Error).message })
     } finally {
       setScanning(false)
+    }
+  }
+
+  /** 注入 Virtual PJL 调试状态（对齐 vipp.setCondition 的调试用途） */
+  const injectPjl = async (condition: string) => {
+    setPjlBusy(true)
+    try {
+      const { state } = await client.setVpjlCondition(condition)
+      setVpjl(state)
+      toast.success(`已注入 PJL 状态：${PJL_CONDITION_LABEL[condition] ?? condition}`, {
+        description: `CODE ${PJL_CONDITION_CODE[condition] ?? '?'}——到打印机页「刷新能力」验证 VENDOR_API 回读`,
+      })
+    } catch (e) {
+      toast.error('注入失败', { description: (e as Error).message })
+    } finally {
+      setPjlBusy(false)
     }
   }
 
@@ -247,6 +305,97 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                   </div>
                 )
               })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ---------------------------------------------------------------- Virtual PJL Printer（P4 · RAW 9100 仿真） */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Cable className="size-4 text-muted-foreground" aria-hidden />
+            Virtual PJL Printer
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              开发 / 测试工具
+            </Badge>
+            {vpjl && (
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                :{vpjlPort} · RAW 9100 · HP JetDirect
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            P4 Vendor Adapter 试点——本地 RAW 9100 仿真（HP JetDirect / AppSocket 血统，1992 年 HP 发明、事实上的打印通用端口）。
+            在无实体打印机的环境中验证 <strong className="text-foreground">PJL 双向回读</strong>全链路：UEL 包裹的
+            <code className="mx-1 rounded bg-muted px-1 py-px font-mono text-[10px]">@PJL INFO STATUS / SUPPLY</code>
+            查询 → 状态码映射 / 耗材解析 → 能力报告 VENDOR_API 来源融合。生产部署可用 OPS_VPJL_ENABLED=0 关闭。
+          </p>
+          {!vpjl ? (
+            <EmptyState title="Virtual PJL Printer 未启用" hint="可通过环境变量 OPS_VPJL_ENABLED=0 关闭；默认随 Host 启动（:3067）" />
+          ) : (
+            <div className="space-y-3">
+              <div className="grid gap-2 min-[420px]:grid-cols-3">
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">当前状态（PJL CODE）</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
+                    <span
+                      className={cn(
+                        'inline-block size-2 shrink-0 rounded-full',
+                        vpjl.condition === 'ready' && 'bg-emerald-500',
+                        vpjl.condition === 'busy' && 'bg-sky-500 animate-pulse',
+                        vpjl.condition === 'warmup' && 'bg-amber-500 animate-pulse',
+                        (vpjl.condition === 'offline' || vpjl.condition === 'paper-out' || vpjl.condition === 'paper-jam' || vpjl.condition === 'door-open' || vpjl.condition === 'toner-empty') && 'bg-red-500',
+                        vpjl.condition === 'toner-low' && 'bg-amber-500',
+                      )}
+                      aria-hidden
+                    />
+                    {PJL_CONDITION_LABEL[vpjl.condition] ?? vpjl.condition}
+                    <span className="font-mono text-[10px] text-muted-foreground/70">{PJL_CONDITION_CODE[vpjl.condition] ?? ''}</span>
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">RAW 已接收字节（打印数据通道）</p>
+                  <p className="mt-1 font-mono text-sm font-medium">{vpjl.rawReceivedBytes.toLocaleString()} B</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">连接数 / 模拟页数</p>
+                  <p className="mt-1 font-mono text-sm font-medium">
+                    {vpjl.connectionCount} / {vpjl.rawPageCount} 页
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>注入调试状态（验证 @PJL INFO 回读 → 能力报告 VENDOR_API 融合）</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PJL_CONDITIONS.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => void injectPjl(c.key)}
+                      disabled={pjlBusy}
+                      className={cn(
+                        'rounded-md border px-2 py-1 text-[11px] transition-colors duration-150 disabled:opacity-60',
+                        vpjl.condition === c.key
+                          ? 'border-primary/40 bg-primary/10 text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                      )}
+                      title={c.hint}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+                验证路径：在
+                <button className="mx-0.5 underline decoration-dotted underline-offset-2" onClick={() => goto('pairing')}>设备配对页</button>
+                启用「PJL 探测设置」并将端口指向 {vpjlPort}，导入任一 vipp 打印机（backendUri 主机 127.0.0.1）后到
+                <button className="mx-0.5 underline decoration-dotted underline-offset-2" onClick={() => goto('printers')}>打印机页</button>
+                点「刷新能力」——VENDOR_API 探测记录与耗材融合即来自本设备回读。
+                <span className="text-foreground/80">未知 CODE 不映射状态（三态原则：不猜测）。</span>
+              </p>
             </div>
           )}
         </CardContent>

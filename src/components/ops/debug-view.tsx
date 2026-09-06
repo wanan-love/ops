@@ -353,7 +353,7 @@ function SelfTestPanel({ scenarios }: { scenarios: ScenarioMeta[] }) {
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">
           覆盖：正常打印 / 离线 / 恢复 / 缺纸 / 卡纸 / 失败 / 取消 / 排队 / 并发 / Host 重启 / IPP 全链路 / 能力未知容错 / IPP 取消 / mDNS 发现 / ipps TLS /
-          eSCL 扫描 / 扫描 PDF 导出。每个场景创建隔离的 TEST 虚拟打印机，工件落盘{' '}
+          eSCL 扫描 / 扫描 PDF 导出 / 双面扫描 / 控制台鉴权 / PJL over 9100（P4 Vendor Adapter）。每个场景创建隔离的 TEST 虚拟打印机，工件落盘{' '}
           <code className="rounded bg-muted px-1 font-mono text-[10px]">./data/mock-printer/</code>，全部通过后自动清理。
         </p>
 

@@ -192,7 +192,7 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
                           <span className={cn('size-1.5 shrink-0 rounded-full', p.ok ? 'bg-emerald-500' : 'bg-red-500')} aria-hidden />
                           <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground">{p.source}</span>
                           <span className="min-w-0 flex-1 break-words text-muted-foreground">
-                            {p.ok ? `成功（${p.durationMs}ms）` : p.error ?? '失败'}
+                            {p.ok ? `成功（${p.durationMs}ms${p.detail ? ` · ${p.detail}` : ''}）` : p.error ?? '失败'}
                           </span>
                         </li>
                       ))}

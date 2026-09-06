@@ -3,6 +3,7 @@ import type { HostContext } from '../host'
 import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
 import type { BackendKind, CapabilityReport } from '../core/types'
 import { probeSnmpConsumables, probeSnmpStatus, snmpHostFromUri, type SnmpProbeOptions } from '../backends/snmp'
+import { pjlHostFromUri, probePjlStatus, probePjlSupply, type PjlProbeOptions } from '../backends/pjl'
 import type { CreatePrinterInput } from '../core/printers'
 import type { PrintOptions } from '../core/types'
 
@@ -193,8 +194,11 @@ export function buildRouter(): Router {
     if (!printer) return sendError(res, 404, `打印机不存在：${params.id}`)
     const backend = ctx.backends.get(printer.backend)
     if (!backend && printer.backend !== 'mock') return sendError(res, 404, `打印机后端未装配：${printer.backend}`)
-    // 并行探测：后端属性 + SNMP 耗材/状态（失败只记 probe，不影响其它能力与现有状态）
-    const snmpCommunity = ctx.settings.get().snmpCommunity || 'public'
+    // 并行探测：后端属性 + SNMP 耗材/状态 + PJL over 9100（P4 Vendor Adapter；均失败只记 probe）
+    const s = ctx.settings.get()
+    const snmpCommunity = s.snmpCommunity || 'public'
+    // SNMP 状态融合结果（PJL 融合需要知道 SNMP 是否已应用——通道优先级 IPP → SNMP → PJL）
+    let snmpStatusApplied = false
     const snmpPromise = (async () => {
       const host = printer.backendUri ? snmpHostFromUri(printer.backendUri) : null
       if (!host) return [] as Array<{ source: 'SNMP'; report: CapabilityReport }>
@@ -205,13 +209,45 @@ export function buildRouter(): Router {
       if (status.status && (printer.status === 'online' || printer.status === 'busy')) {
         if (status.status !== 'online' && status.status !== 'busy') {
           ctx.printers.setStatus(printer, status.status, status.message)
+          snmpStatusApplied = true
         } else if (printer.status === 'online' && status.status === 'busy') {
           ctx.printers.setStatus(printer, 'busy', status.message)
+          snmpStatusApplied = true
         }
       }
       return [{ source: 'SNMP' as const, report: supplies.report }]
     })()
-    const report = await ctx.printers.refreshCapabilities(printer, backend ?? null, snmpPromise)
+    // PJL over RAW 9100（P4）：默认关闭（VENDOR_PROTOCOLS.md 安全默认）；仅在 IPP/SNMP 未能确定时补充——
+    // merge 层面由来源优先级保证（VENDOR_API < SNMP < IPP），状态融合层由 snmpStatusApplied 守卫
+    const pjlPromise = (async () => {
+      if (s.pjlProbeEnabled !== true) return [] as Array<{ source: 'VENDOR_API'; report: CapabilityReport }>
+      const host = printer.backendUri ? pjlHostFromUri(printer.backendUri) : null
+      if (!host) return [] as Array<{ source: 'VENDOR_API'; report: CapabilityReport }>
+      const opts: PjlProbeOptions = { host, port: s.pjlPort ?? 9100, timeoutMs: 900 }
+      const [supply, status] = await Promise.all([probePjlSupply(opts), probePjlStatus(opts)])
+      // 通道优先级 IPP → SNMP → PJL：状态融合前先等 SNMP 决策完成（snmpPromise 内部不 reject，兜底 catch）
+      await snmpPromise.catch(() => undefined)
+      // 状态融合：仅当 SNMP 未应用且打印机处于 online/busy（已有更具体状态优先保留；PJL 是最后手段）
+      if (status.ok && status.status && !snmpStatusApplied && (printer.status === 'online' || printer.status === 'busy')) {
+        if (status.status !== 'online' && status.status !== 'busy') {
+          ctx.printers.setStatus(printer, status.status, status.message ?? `PJL ${status.rawCode}`)
+        } else if (printer.status === 'online' && status.status === 'busy') {
+          ctx.printers.setStatus(printer, 'busy', status.message ?? 'PRINTING')
+        }
+      }
+      // 状态回读无论耗材结果如何都记 probe（UI 展示该来源曾尝试 + 原始 CODE 诊断信息）
+      const report = supply.report
+      if (status.ok) {
+        report.probes.push({ source: 'VENDOR_API', ok: true, durationMs: status.durationMs, detail: `PJL INFO STATUS CODE=${status.rawCode}（${status.display ?? ''}）`, at: new Date().toISOString() })
+      }
+      return [{ source: 'VENDOR_API' as const, report }]
+    })()
+    // 扁平化合并 extras（refreshCapabilities 收单一 Promise<Array>）
+    const extrasPromise = (async () => {
+      const [snmpList, pjlList] = await Promise.all([snmpPromise, pjlPromise])
+      return [...snmpList, ...pjlList]
+    })()
+    const report = await ctx.printers.refreshCapabilities(printer, backend ?? null, extrasPromise)
     sendJson(res, 200, { printer, report })
   })
 
@@ -243,6 +279,27 @@ export function buildRouter(): Router {
     const snapshot = await ctx.vipp.setPpm(params.id, Number(input.ppm))
     if (!snapshot) return sendError(res, 404, `vipp 打印机不存在：${params.id}`)
     sendJson(res, 200, { ok: true, printer: snapshot })
+  })
+
+  // ---------------------------------------------------------------- Virtual PJL Printer 控制（P4 · RAW 9100 仿真）
+
+  /** 当前虚拟 PJL 设备快照（状态/原始字节计数/连接数） */
+  router.get('/api/vpjl/state', (ctx, _req, res) => {
+    if (!ctx.vpjl) return sendError(res, 409, 'Virtual PJL Printer 未启用（OPS_VPJL_ENABLED=0）')
+    sendJson(res, 200, { state: ctx.vpjl.state() })
+  })
+
+  /** 注入调试状态（对齐 vipp.setCondition 的调试用途；配合打印机页「刷新能力」验证 PJL 状态/耗材回读） */
+  router.post('/api/vpjl/condition', (ctx, _req, res, _params, _query, body) => {
+    if (!ctx.vpjl) return sendError(res, 409, 'Virtual PJL Printer 未启用（OPS_VPJL_ENABLED=0）')
+    const input = parseJsonBody<{ condition?: string }>(body)
+    const condition = input?.condition
+    if (!condition) return sendError(res, 400, '请求体必须包含 condition')
+    const state = ctx.vpjl.setCondition(condition)
+    if (!state) {
+      return sendError(res, 400, 'condition 仅支持 ready | busy | warmup | offline | paper-out | paper-jam | door-open | toner-low | toner-empty')
+    }
+    sendJson(res, 200, { ok: true, state, message: `已注入 PJL 状态：${condition}` })
   })
 
   // ---------------------------------------------------------------- 扫描（P3 · eSCL）
@@ -606,12 +663,25 @@ export function buildRouter(): Router {
       const c = String(patch.snmpCommunity)
       if (!/^\S{1,64}$/.test(c)) return sendError(res, 400, 'snmpCommunity 需为 1-64 个非空白字符')
     }
+    if (patch.pjlProbeEnabled !== undefined && typeof patch.pjlProbeEnabled !== 'boolean') {
+      return sendError(res, 400, 'pjlProbeEnabled 需为布尔值')
+    }
+    if (patch.pjlPort !== undefined) {
+      const p = Number(patch.pjlPort)
+      if (!Number.isInteger(p) || p < 1 || p > 65535) return sendError(res, 400, 'pjlPort 需为 1-65535 整数（真实设备通用 9100）')
+    }
     const settings = await ctx.settings.patch({
       hostName: patch.hostName?.slice(0, 80),
       securityMode: patch.securityMode,
       snmpCommunity: patch.snmpCommunity,
+      pjlProbeEnabled: patch.pjlProbeEnabled,
+      pjlPort: patch.pjlPort,
     })
-    ctx.log.record({ type: 'security', topic: 'settings', message: `Host 设置已更新（安全模式：${settings.securityMode}${patch.snmpCommunity !== undefined ? '，SNMP community 已更新' : ''}）` })
+    ctx.log.record({
+      type: 'security',
+      topic: 'settings',
+      message: `Host 设置已更新（安全模式：${settings.securityMode}${patch.snmpCommunity !== undefined ? '，SNMP community 已更新' : ''}${patch.pjlProbeEnabled !== undefined ? `，PJL 探测 ${settings.pjlProbeEnabled === true ? '已启用' : '已关闭'}` : ''}${patch.pjlPort !== undefined ? `（端口 ${settings.pjlPort ?? 9100}）` : ''}）`,
+    })
     ctx.bus.emit('host:update', { info: ctx.hostInfo() })
     sendJson(res, 200, { settings })
   })

@@ -179,13 +179,13 @@ export class VirtualPrintEngine {
     this.active.delete(printer.id)
     job.printedSheets = job.sheetsTotal
     job.progress = 100
-    this.jobs.setState(job, 'completed', `打印完成（${job.sheetsTotal} 张）`)
-    void this.jobs.writeResult(job, 'success', 'Virtual Printer 模拟打印完成')
     printer.stats.completed += 1
     printer.stats.sheets += job.sheetsTotal
     printer.status = 'online'
     printer.statusMessage = ''
     this.printers.touch(printer, { persist: true })
+    // 终态顺序保证：result.json 先落盘、completed 后广播（jobs.finish，竞态修复）
+    void this.jobs.finish(job, 'completed', `打印完成（${job.sheetsTotal} 张）`, 'Virtual Printer 模拟打印完成')
     this.log.printer(printer, `任务完成 ${job.id}（${job.fileName}）`)
   }
 

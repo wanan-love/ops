@@ -199,7 +199,7 @@ export function createOpsClient(port: number) {
     devices: () => request<{ devices: PairedDevice[] }>(port, 'GET', '/devices'),
     revokeDevice: (deviceId: string) => request<{ ok: boolean }>(port, 'DELETE', `/devices/${encodeURIComponent(deviceId)}`),
     settings: () => request<{ settings: HostSettings }>(port, 'GET', '/settings'),
-    updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }) =>
+    updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string; pjlProbeEnabled?: boolean; pjlPort?: number }) =>
       request<{ settings: HostSettings }>(port, 'PATCH', '/settings', { json: patch }),
 
     // console auth（P2 安全轮：管理面令牌）
@@ -241,6 +241,11 @@ export function createOpsClient(port: number) {
     vippPrinters: () => request<VippInfo>(port, 'GET', '/vipp/printers'),
     setVippCondition: (id: string, condition: string, message?: string) =>
       request<{ ok: boolean; message?: string }>(port, 'POST', `/vipp/printers/${encodeURIComponent(id)}/condition`, { json: { condition, message } }),
+
+    // Virtual PJL Printer（P4 · RAW 9100 仿真）
+    vpjlState: () => request<{ state: VpjlState }>(port, 'GET', '/vpjl/state'),
+    setVpjlCondition: (condition: string) =>
+      request<{ ok: boolean; state: VpjlState; message?: string }>(port, 'POST', '/vpjl/condition', { json: { condition } }),
 
     // mDNS 网络打印机发现
     mdnsScan: () => request<{ printers: DiscoveredIpPrinter[] }>(port, 'POST', '/discovery/mdns/scan'),
@@ -304,6 +309,18 @@ export interface VippInfo {
   tlsPort: number | null
   dataDir: string
   printers: VippPrinterInfo[]
+}
+
+/** Virtual PJL Printer（RAW 9100 仿真）状态快照 */
+export interface VpjlState {
+  condition: string
+  /** 累计接收的 RAW 打印字节数（UEL 之间的非 PJL 数据） */
+  rawReceivedBytes: number
+  /** 模拟已打印页数（每 5120 bytes 计 1 页） */
+  rawPageCount: number
+  /** 服务的连接总数（含已关闭） */
+  connectionCount: number
+  updatedAt: string
 }
 
 /** mDNS 发现的网络 IPP 打印机 */

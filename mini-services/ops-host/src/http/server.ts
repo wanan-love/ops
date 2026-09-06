@@ -153,6 +153,13 @@ export function createRestServer(ctx: HostContext, restPort: number): { server: 
       const match = router.match(req.method ?? 'GET', url.pathname)
 
       if (!match) {
+        // /healthz 永远返回 JSON 健康信息（监控探活契约，PROTOCOL.md）——必须先于 Web 静态资产分支，
+        // 否则打包模式（webDir/嵌入式资产存在）下 /healthz 会被 SPA index.html 截获（200 + text/html），
+        // 监控工具拿到 34KB HTML 而非探活 JSON
+        if (req.method === 'GET' && url.pathname === '/healthz') {
+          sendJson(res, 200, { ok: true, service: 'openprintshare-host', api: 'OPS/1.0', restPort, wsPort: ctx.wsPort, version: ctx.hostInfo().version })
+          return
+        }
         // 打包模式：非 /api/* 的 GET/HEAD 请求 → Web 控制台（磁盘目录或内嵌资产）
         if ((ctx.webDir || Object.keys(ctx.embeddedWeb).length > 0) && (req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
           if (req.method === 'HEAD') {
@@ -163,7 +170,7 @@ export function createRestServer(ctx: HostContext, restPort: number): { server: 
           await serveStatic(ctx, res, url.pathname)
           return
         }
-        if (url.pathname === '/' || url.pathname === '/healthz') {
+        if (url.pathname === '/') {
           sendJson(res, 200, { ok: true, service: 'openprintshare-host', api: 'OPS/1.0', restPort, wsPort: ctx.wsPort, version: ctx.hostInfo().version })
           return
         }
