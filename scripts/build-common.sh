@@ -9,7 +9,7 @@ DIST="$OPS_ROOT/dist"
 STAGE="$DIST/.stage"
 
 version() {
-  sed -n "s/^OPS_VERSION = '\([^']*\)'/\1/p" "$HOST_ROOT/src/core/types.ts" | head -1
+  sed -n "s/.*OPS_VERSION = '\([^']*\)'.*/\1/p" "$HOST_ROOT/src/core/types.ts" | head -1
 }
 
 PRODUCT="OpenPrintShare"
