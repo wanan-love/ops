@@ -59,6 +59,8 @@ export function errorReport(source: CapabilitySource, error: string): Capability
 
 function pickCap<T>(inputs: ReportInput[], key: keyof CapabilityReport, rank: (s: CapabilitySource) => number): Capability<T> {
   const candidates = inputs.map((input, idx) => ({ cap: input.report[key] as Capability<T>, idx }))
+  // 空输入保护（如 Mock 打印机无 backendKey 且无旧报告时 inputs=[]）→ 全 unknown，不猜测
+  if (candidates.length === 0) return unknownCap('UNKNOWN', '无可用探测来源（后端未报告且无历史报告）')
   // 排序：已知态在前（unknown 永远排在已知之后）→ 来源优先级小者在前 → 输入顺序在前（新报告优先覆盖旧值）
   candidates.sort((a, b) => {
     const known = (c: Capability<T>): number => (c.state === 'unknown' ? 1 : 0)
@@ -68,7 +70,7 @@ function pickCap<T>(inputs: ReportInput[], key: keyof CapabilityReport, rank: (s
     if (bySource !== 0) return bySource
     return a.idx - b.idx
   })
-  return candidates[0].cap
+  return candidates[0]!.cap
 }
 
 /**

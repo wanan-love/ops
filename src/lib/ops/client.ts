@@ -149,7 +149,7 @@ export function createOpsClient(port: number) {
     devices: () => request<{ devices: PairedDevice[] }>(port, 'GET', '/devices'),
     revokeDevice: (deviceId: string) => request<{ ok: boolean }>(port, 'DELETE', `/devices/${encodeURIComponent(deviceId)}`),
     settings: () => request<{ settings: HostSettings }>(port, 'GET', '/settings'),
-    updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing' }) =>
+    updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }) =>
       request<{ settings: HostSettings }>(port, 'PATCH', '/settings', { json: patch }),
 
     // mock / debug 控制台

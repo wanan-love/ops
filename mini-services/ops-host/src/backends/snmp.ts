@@ -1,22 +1,50 @@
 import { createSocket, type Socket } from 'node:dgram'
-import type { CapabilityProbe, CapabilityReport, ConsumableInfo } from '../core/types'
+import type { CapabilityProbe, CapabilityReport, ConsumableInfo, PrinterStatus } from '../core/types'
 import { emptyReport, failProbe, supportedCap } from './merge'
 
 /**
- * SNMP v1 探测（RFC 1157 BER 编解码自研，UDP 161，尽力而为）。
+ * SNMP v1/v2c 探测（RFC 1157 BER 编解码自研，UDP 161，尽力而为）。
  *
- * OID（Printer-MIB RFC 3805）：
+ * OID（Printer-MIB RFC 3805）耗材：
  *  - prtMarkerSuppliesLevel       1.3.6.1.2.1.43.11.1.1.9.<idx>（值：-3 unknown / -2 remaining 非精确 / -1..100 百分比）
  *  - prtMarkerSuppliesType        1.3.6.1.2.1.43.11.1.1.5.<idx>（3 toner / 4 ink / 8 drum…）
  *  - prtMarkerSuppliesDescription 1.3.6.1.2.1.43.11.1.1.6.<idx>（字符串）
  *
+ * OID（HOST-RESOURCES-MIB RFC 2790）状态（P1 增强：SNMP 作为状态二级来源）：
+ *  - hrDeviceType               1.3.6.1.2.1.25.3.2.1.3.<idx>（值=OID；printer 类型为 1.3.6.1.2.1.25.3.1.5）
+ *  - hrPrinterStatus            1.3.6.1.2.1.25.3.5.1.1.<idx>（1 other / 2 unknown / 3 idle / 4 printing / 5 warmup）
+ *  - hrPrinterDetectedErrorState 1.3.6.1.2.1.25.3.5.1.2.<idx>（OCTET STRING 位掩码：bit0 lowPaper / bit1 noPaper /
+ *    bit2 jam / bit3 doorOpen / bit4 inputTrayMissing / bit5 outputTrayMissing / bit6 markerSupplyMissing /
+ *    bit7 outputFull / bit8 inputProblem / bit9 outputProblem / bit10 markerSupplyLow / bit11 markerSupplyEmpty）
+ *
  * 原则：SNMP 失败绝不影响其它能力与打印可用性 —— 只返回失败 probe，
- * 耗材归 UNKNOWN（读取不到 ≠ 不支持）。
+ * 耗材归 UNKNOWN、状态返回 null（读取不到 ≠ 不支持，不猜测）。
  */
 
 const PRINTER_MIB_SUPPLIES_LEVEL = '1.3.6.1.2.1.43.11.1.1.9'
 const PRINTER_MIB_SUPPLIES_TYPE = '1.3.6.1.2.1.43.11.1.1.5'
 const PRINTER_MIB_SUPPLIES_DESC = '1.3.6.1.2.1.43.11.1.1.6'
+const HR_DEVICE_TYPE = '1.3.6.1.2.1.25.3.2.1.3'
+const HR_PRINTER_STATUS = '1.3.6.1.2.1.25.3.5.1.1'
+const HR_PRINTER_ERROR_STATE = '1.3.6.1.2.1.25.3.5.1.2'
+/** hrDeviceType 值为 OID；printer 设备类型的标准值 */
+const HR_DEVICE_PRINTER_OID = '1.3.6.1.2.1.25.3.1.5'
+
+/** hrPrinterDetectedErrorState 位掩码 → 可读名（RFC 2790 TC 定义） */
+const HR_ERROR_BITS: Array<{ bit: number; name: string }> = [
+  { bit: 0, name: 'lowPaper' },
+  { bit: 1, name: 'noPaper' },
+  { bit: 2, name: 'jam' },
+  { bit: 3, name: 'doorOpen' },
+  { bit: 4, name: 'inputTrayMissing' },
+  { bit: 5, name: 'outputTrayMissing' },
+  { bit: 6, name: 'markerSupplyMissing' },
+  { bit: 7, name: 'outputFull' },
+  { bit: 8, name: 'inputProblem' },
+  { bit: 9, name: 'outputProblem' },
+  { bit: 10, name: 'markerSupplyLow' },
+  { bit: 11, name: 'markerSupplyEmpty' },
+]
 
 export interface SnmpProbeOptions {
   host: string
@@ -210,7 +238,12 @@ function decodeOid(content: Buffer): string {
 
 interface SnmpVarBind {
   oid: string
-  value: { kind: 'int'; value: number } | { kind: 'string'; value: string } | { kind: 'null' } | { kind: 'other' }
+  value:
+    | { kind: 'int'; value: number }
+    | { kind: 'string'; value: string; raw?: Buffer }
+    | { kind: 'oid'; value: string }
+    | { kind: 'null' }
+    | { kind: 'other' }
 }
 
 interface SnmpResponse {
@@ -252,7 +285,8 @@ function decodeSnmpResponse(buf: Buffer): SnmpResponse {
     const valueTlv = pairReader.readTlv()
     let value: SnmpVarBind['value']
     if (valueTlv.tag === 0x02) value = { kind: 'int', value: readIntContent(valueTlv.content) }
-    else if (valueTlv.tag === 0x04) value = { kind: 'string', value: valueTlv.content.toString('utf8') }
+    else if (valueTlv.tag === 0x04) value = { kind: 'string', value: valueTlv.content.toString('utf8'), raw: valueTlv.content }
+    else if (valueTlv.tag === 0x06) value = { kind: 'oid', value: decodeOid(valueTlv.content) }
     else if (valueTlv.tag === 0x05) value = { kind: 'null' }
     else value = { kind: 'other' }
     varbinds.push({ oid, value })
@@ -340,6 +374,18 @@ async function snmpGetNext(host: string, port: number, community: string, oid: s
   const vb = response.varbinds[0]
   if (!vb) throw new Error('SNMP 响应无 varbind')
   return vb
+}
+
+/** SNMP v1 GetRequest 精确读取（多 OID 单次往返；varbind 顺序与请求一致） */
+async function snmpGet(host: string, port: number, community: string, oids: string[], timeoutMs: number, retries: number): Promise<SnmpVarBind[]> {
+  const requestId = (Math.random() * 0x7fffffff) | 0
+  const payload = encodeSnmpRequest(0x00, requestId, community, oids)
+  const { buffer } = await udpRequest(host, port, payload, timeoutMs, retries)
+  const response = decodeSnmpResponse(buffer)
+  if (response.errorStatus !== 0) {
+    throw new Error(`SNMP error-status=${response.errorStatus}（error-index=${response.errorIndex}）`)
+  }
+  return response.varbinds
 }
 
 /** GetNext walk 列举某 OID 子树（最多 maxEntries 条） */
@@ -434,6 +480,120 @@ export async function probeSnmpConsumables(opts: SnmpProbeOptions): Promise<Snmp
   }
 }
 
+/** hrPrinterDetectedErrorState 位掩码字节 → 条件名列表（字节精确解析，经 raw Buffer） */
+export function parseHrErrorBits(raw: Buffer | undefined, value: string): string[] {
+  const bytes = raw ?? Buffer.from(value, 'latin1')
+  const conditions: string[] = []
+  for (const { bit, name } of HR_ERROR_BITS) {
+    const byte = bytes[Math.floor(bit / 8)]
+    if (byte !== undefined && (byte & (1 << (bit % 8))) !== 0) conditions.push(name)
+  }
+  return conditions
+}
+
+/** hrPrinterStatus 枚举值 → 文本 */
+function hrPrinterStatusText(v: number): string {
+  switch (v) {
+    case 1:
+      return 'other'
+    case 2:
+      return 'unknown'
+    case 3:
+      return 'idle'
+    case 4:
+      return 'printing'
+    case 5:
+      return 'warmup'
+    default:
+      return `hrPrinterStatus=${v}`
+  }
+}
+
+export interface SnmpStatusResult {
+  /** null = 读取失败/无打印机设备（绝不能猜测） */
+  status: PrinterStatus | null
+  message: string
+  conditions: string[]
+  probe: CapabilityProbe
+}
+
+/**
+ * 探测打印机运行状态（HOST-RESOURCES-MIB）。
+ * 步骤：walk hrDeviceType 找到 printer 类型设备索引 → GetRequest 读取 hrPrinterStatus + hrPrinterDetectedErrorState。
+ * 失败时 status=null（调用方保持原状态不动）——SNMP 失败绝不影响打印可用性。
+ */
+export async function probeSnmpStatus(opts: SnmpProbeOptions): Promise<SnmpStatusResult> {
+  const startedAt = Date.now()
+  const host = opts.host
+  const port = opts.port ?? 161
+  const community = opts.community ?? 'public'
+  const timeoutMs = opts.timeoutMs ?? 900
+  const retries = opts.retries ?? 1
+  const fail = (message: string): SnmpStatusResult => {
+    const probe = failProbe('SNMP', Date.now() - startedAt, message)
+    return { status: null, message: `SNMP 状态探测失败：${message}`, conditions: [], probe }
+  }
+  try {
+    // 1) 找 printer 设备索引（hrDeviceType 值 = 1.3.6.1.2.1.25.3.1.5）
+    const deviceTypes = await snmpWalk(host, port, community, HR_DEVICE_TYPE, opts)
+    const printerIndices: string[] = []
+    for (const [oid, vb] of deviceTypes) {
+      if (vb.value.kind === 'oid' && oidWithin(vb.value.value, HR_DEVICE_PRINTER_OID)) {
+        const idx = oidIndex(oid, HR_DEVICE_TYPE)
+        if (idx) printerIndices.push(idx)
+      }
+    }
+    if (printerIndices.length === 0) {
+      // 读取成功但没有 printer 设备 —— 如实返回，不猜测
+      return {
+        status: null,
+        message: 'SNMP HOST-RESOURCES 未发现 printer 类型设备（hrDeviceType 无 25.3.1.5）',
+        conditions: [],
+        probe: { source: 'SNMP', ok: true, durationMs: Date.now() - startedAt, at: new Date().toISOString() },
+      }
+    }
+    // 2) 读取第一台 printer 的状态 + 错误位掩码（多 OID 单次往返）
+    const idx = printerIndices[0]!
+    const [vbs] = await Promise.all([
+      snmpGet(host, port, community, [`${HR_PRINTER_STATUS}.${idx}`, `${HR_PRINTER_ERROR_STATE}.${idx}`], timeoutMs, retries),
+    ])
+    let hrStatus = 0
+    let errorRaw: Buffer | undefined
+    let errorStr = ''
+    for (const vb of vbs) {
+      if (oidWithin(vb.oid, `${HR_PRINTER_STATUS}.${idx}`) && vb.value.kind === 'int') hrStatus = vb.value.value
+      if (oidWithin(vb.oid, `${HR_PRINTER_ERROR_STATE}.${idx}`) && vb.value.kind === 'string') {
+        errorRaw = vb.value.raw
+        errorStr = vb.value.value
+      }
+    }
+    const conditions = parseHrErrorBits(errorRaw, errorStr)
+    const durationMs = Date.now() - startedAt
+    const probe: CapabilityProbe = { source: 'SNMP', ok: true, durationMs, at: new Date().toISOString() }
+    const statusText = hrPrinterStatusText(hrStatus)
+    // 3) 位掩码条件 → OPS PrinterStatus 映射（优先级：硬条件 > 运行态）
+    if (conditions.includes('noPaper') || conditions.includes('lowPaper')) {
+      return { status: 'paper-out', message: `SNMP hrPrinterDetectedErrorState=${conditions.join(',')}（缺纸）`, conditions, probe }
+    }
+    if (conditions.includes('jam')) {
+      return { status: 'paper-jam', message: `SNMP hrPrinterDetectedErrorState=${conditions.join(',')}（卡纸）`, conditions, probe }
+    }
+    const hardErrors = conditions.filter((c) => !['markerSupplyLow', 'markerSupplyEmpty'].includes(c))
+    if (hardErrors.length > 0) {
+      return { status: 'error', message: `SNMP hrPrinterDetectedErrorState=${conditions.join(',')}`, conditions, probe }
+    }
+    // 仅耗材告警 → 保持运行态 + 告警附加
+    const supplyWarn = conditions.filter((c) => c.startsWith('markerSupply'))
+    const warnSuffix = supplyWarn.length > 0 ? `（耗材告警：${supplyWarn.join(',')}）` : ''
+    if (hrStatus === 4) return { status: 'busy', message: `SNMP hrPrinterStatus=printing${warnSuffix}`, conditions, probe }
+    if (hrStatus === 3 || hrStatus === 5) return { status: 'online', message: `SNMP hrPrinterStatus=${statusText}${warnSuffix}`, conditions, probe }
+    // hrStatus other(1)/unknown(2)/读不到 → 状态未知，不覆盖
+    return { status: null, message: `SNMP hrPrinterStatus=${statusText}（状态不可映射，保持原状态）`, conditions, probe }
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err))
+  }
+}
+
 /** 从 IPP URI 提取 SNMP host（ipps/ipps 不支持 TLS，故取 ipp/http 的 host） */
 export function snmpHostFromUri(uri: string): string | null {
   try {
@@ -445,4 +605,4 @@ export function snmpHostFromUri(uri: string): string | null {
 
 // ---------------------------------------------------------------- BER 编码自测导出（供测试使用）
 
-export const _internal = { encodeSnmpRequest, decodeSnmpResponse, readIntContent, decodeOid }
+export const _internal = { encodeSnmpRequest, decodeSnmpResponse, readIntContent, decodeOid, parseHrErrorBits }

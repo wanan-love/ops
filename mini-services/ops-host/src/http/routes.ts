@@ -1,8 +1,8 @@
 import { Router, headerString, parseJsonBody, readBody, sendError, sendJson } from './router'
 import type { HostContext } from '../host'
 import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
-import type { BackendKind } from '../core/types'
-import { probeSnmpConsumables, snmpHostFromUri } from '../backends/snmp'
+import type { BackendKind, CapabilityReport } from '../core/types'
+import { probeSnmpConsumables, probeSnmpStatus, snmpHostFromUri, type SnmpProbeOptions } from '../backends/snmp'
 import type { CreatePrinterInput } from '../core/printers'
 import type { PrintOptions } from '../core/types'
 
@@ -193,12 +193,23 @@ export function buildRouter(): Router {
     if (!printer) return sendError(res, 404, `打印机不存在：${params.id}`)
     const backend = ctx.backends.get(printer.backend)
     if (!backend && printer.backend !== 'mock') return sendError(res, 404, `打印机后端未装配：${printer.backend}`)
-    // 并行探测：后端属性 + SNMP 耗材（失败只记 probe，不影响其它能力）
+    // 并行探测：后端属性 + SNMP 耗材/状态（失败只记 probe，不影响其它能力与现有状态）
+    const snmpCommunity = ctx.settings.get().snmpCommunity || 'public'
     const snmpPromise = (async () => {
       const host = printer.backendUri ? snmpHostFromUri(printer.backendUri) : null
-      if (!host) return []
-      const result = await probeSnmpConsumables({ host, timeoutMs: 900, retries: 1 })
-      return [{ source: 'SNMP' as const, report: result.report }]
+      if (!host) return [] as Array<{ source: 'SNMP'; report: CapabilityReport }>
+      const opts: SnmpProbeOptions = { host, community: snmpCommunity, timeoutMs: 900, retries: 1 }
+      const [supplies, status] = await Promise.all([probeSnmpConsumables(opts), probeSnmpStatus(opts)])
+      // SNMP 状态融合：仅当 SNMP 读到硬条件（缺纸/卡纸/错误）且当前状态为 online/busy 时覆盖 ——
+      // 已有更具体的 IPP 状态（paper-out/paper-jam/offline）优先保留；status=null 时不动
+      if (status.status && (printer.status === 'online' || printer.status === 'busy')) {
+        if (status.status !== 'online' && status.status !== 'busy') {
+          ctx.printers.setStatus(printer, status.status, status.message)
+        } else if (printer.status === 'online' && status.status === 'busy') {
+          ctx.printers.setStatus(printer, 'busy', status.message)
+        }
+      }
+      return [{ source: 'SNMP' as const, report: supplies.report }]
     })()
     const report = await ctx.printers.refreshCapabilities(printer, backend ?? null, snmpPromise)
     sendJson(res, 200, { printer, report })
@@ -417,16 +428,21 @@ export function buildRouter(): Router {
   })
 
   router.patch('/api/settings', async (ctx, _req, res, _params, _query, body) => {
-    const patch = parseJsonBody<{ hostName?: string; securityMode?: 'open' | 'pairing' }>(body)
+    const patch = parseJsonBody<{ hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }>(body)
     if (!patch) return sendError(res, 400, '请求体不是合法 JSON')
     if (patch.securityMode && patch.securityMode !== 'open' && patch.securityMode !== 'pairing') {
       return sendError(res, 400, 'securityMode 仅支持 open | pairing')
     }
+    if (patch.snmpCommunity !== undefined) {
+      const c = String(patch.snmpCommunity)
+      if (!/^\S{1,64}$/.test(c)) return sendError(res, 400, 'snmpCommunity 需为 1-64 个非空白字符')
+    }
     const settings = await ctx.settings.patch({
       hostName: patch.hostName?.slice(0, 80),
       securityMode: patch.securityMode,
+      snmpCommunity: patch.snmpCommunity,
     })
-    ctx.log.record({ type: 'security', topic: 'settings', message: `Host 设置已更新（安全模式：${settings.securityMode}）` })
+    ctx.log.record({ type: 'security', topic: 'settings', message: `Host 设置已更新（安全模式：${settings.securityMode}${patch.snmpCommunity !== undefined ? '，SNMP community 已更新' : ''}）` })
     ctx.bus.emit('host:update', { info: ctx.hostInfo() })
     sendJson(res, 200, { settings })
   })

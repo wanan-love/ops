@@ -215,6 +215,8 @@ export interface HostSettings {
   hostId: string
   hostName: string
   securityMode: 'open' | 'pairing'
+  /** SNMP v1/v2c community 字符串（耗材/状态探测用；企业机型常改为非默认值） */
+  snmpCommunity?: string
 }
 
 export interface PairedDevice {

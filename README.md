@@ -29,7 +29,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 | **IPPPrinterBackend** | ✔ 通过 Virtual IPP Server 全链路验证 | 自研 RFC 8010/8011 二进制协议栈，直连 ipp:// 网络打印机 |
 | **CupsPrinterBackend** | 代码完备，待 CUPS 宿主验证 | lpstat/lp CLI + ipp://localhost:631，macOS/Linux |
 | **WindowsPrinterBackend** | 代码完备，待 Windows 宿主验证 | PowerShell Get-Printer/Get-PrintJob/Win32_Printer + PrintTo |
-| SNMP 耗材探测 | 代码完备，待真实设备验证 | 自研 RFC 1157 BER 编解码，Printer-MIB prtMarkerSuppliesLevel |
+| SNMP 耗材/状态探测 | 代码完备，待真实设备验证 | 自研 RFC 1157 BER 编解码：Printer-MIB prtMarkerSuppliesLevel（耗材）+ HOST-RESOURCES hrPrinterDetectedErrorState（缺纸/卡纸/门开位掩码，状态二级来源）；community 可配置（设置页） |
 | mDNS/Bonjour 发现 | ✔ 本机回环验证 | 自研 RFC 6762/6763 UDP 组播（_ipp._tcp 浏览 + 自通告） |
 
 > 开发/测试用的 MockPrinterBackend 见[开发与测试环境](#开发与测试环境mock--virtual)（仅限单元测试 / 集成测试 / CI / 开发环境，非产品功能）。

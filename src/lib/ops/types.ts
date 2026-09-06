@@ -168,6 +168,7 @@ export interface HostSettings {
   hostId: string
   hostName: string
   securityMode: 'open' | 'pairing'
+  snmpCommunity?: string
 }
 
 export interface PairedDevice {

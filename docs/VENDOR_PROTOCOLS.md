@@ -128,7 +128,7 @@ interface VendorAdapter {
 
 | 阶段 | 内容 | 性质 | 预期收益 |
 |---|---|---|---|
-| **P1（标准二级来源，零厂商知识）** | ① SNMP 补 HOST-RESOURCES `hrPrinterDetectedErrorState`/`hrPrinterStatus` ② SNMP v2c 支持 + community 可配置 ③ IPP 解析 `printer-state-reasons` 的 `toner-low/ink-low` 降级告警 ④ mDNS 识别 `_universal._sub` + TXT `pdl` 里的 `image/urf`/`application/pdf`（driverless 判定） | 纯标准 | 耗材/状态覆盖显著提升，无维护负担 —— **建议立即做** |
+| **P1（标准二级来源，零厂商知识）** | ✅ 已完成（v0.3.1）：① SNMP HOST-RESOURCES `hrPrinterDetectedErrorState`/`hrPrinterStatus`（walk hrDeviceType 定位 printer 设备 + 位掩码解析 → 缺纸/卡纸/门开/耗材告警，作为状态二级来源融合）② community 可配置（settings.snmpCommunity + PATCH /api/settings + 配对页 UI）③ IPP `toner-low/ink-low` 告警附加 ④ driverless 判定含 `image/urf`/`application/pdf` | 纯标准 | 耗材/状态覆盖显著提升，无维护负担 |
 | **P2** | ipps:// TLS（自签容忍策略 + TOFU 白名单） | 纯标准 | 企业机与新款家用机安全合规 |
 | **P3** | eSCL 扫描后端（`_uscan._tcp`/`_scanner._tcp` 发现 + HTTP REST） | 事实标准 | AirPrint MFP 的扫描能力，对齐 sane-airscan 生态 |
 | **P4（首个真 Vendor Adapter）** | Brother PJL over 9100 双向状态（试点：SNMP 失败时才启用）+ 通用 PJL `@PJL INFO` 探测 | 厂商专用 | 消费级墨量长尾；验证适配层模式 |

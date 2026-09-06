@@ -259,7 +259,8 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
           ) : (
             <ul className="space-y-2">
               {mdnsPrinters.map((p) => {
-                const driverless = (p.txt?.pdl ?? '').split(',').map((s) => s.trim()).includes('application/pdf')
+                const pdls = (p.txt?.pdl ?? '').split(',').map((s) => s.trim())
+                const driverless = pdls.includes('application/pdf') || pdls.includes('image/urf')
                 return (
                   <li key={p.uri} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3 transition-colors duration-200 hover:border-primary/30">
                     <div className="min-w-0">
@@ -271,7 +272,7 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                           <Badge
                             variant="outline"
                             className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400"
-                            title="mDNS TXT pdl 含 application/pdf —— 支持 IPP Everywhere 免驱直打（数据来自设备真实通告，非型号猜测）"
+                            title="mDNS TXT pdl 含 application/pdf / image/urf —— 支持 IPP Everywhere / AirPrint 免驱直打（数据来自设备真实通告，非型号猜测）"
                           >
                             IPP Everywhere · 免驱
                           </Badge>

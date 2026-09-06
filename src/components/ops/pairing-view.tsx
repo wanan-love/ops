@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { BadgeCheck, Fingerprint, KeyRound, Link2, Link2Off, MonitorSmartphone, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
+import { BadgeCheck, Fingerprint, KeyRound, Link2, Link2Off, MonitorSmartphone, Radio, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -104,11 +105,39 @@ export function PairingView() {
   const toggleSecurity = async (pairing: boolean) => {
     try {
       await client.updateSettings({ securityMode: pairing ? 'pairing' : 'open' })
+      await refresh()
       toast.success(`安全模式已切换为「${pairing ? '配对' : '开放'}」`, {
         description: pairing ? '未配对设备将无法提交打印任务' : '局域网内设备可直接打印',
       })
     } catch (e) {
       toast.error('设置失败', { description: (e as Error).message })
+    }
+  }
+
+  // SNMP community（耗材/状态探测；企业机型常改非默认值，见 docs/VENDOR_PROTOCOLS.md P1）
+  const [snmpDraft, setSnmpDraft] = useState('')
+  const [snmpDirty, setSnmpDirty] = useState(false)
+  const [snmpSaving, setSnmpSaving] = useState(false)
+  useEffect(() => {
+    if (!snmpDirty && settings) setSnmpDraft(settings.snmpCommunity ?? 'public')
+  }, [settings, snmpDirty])
+
+  const saveSnmpCommunity = async () => {
+    const trimmed = snmpDraft.trim()
+    if (!/^\S{1,64}$/.test(trimmed)) {
+      toast.error('SNMP community 无效', { description: '需为 1-64 个非空白字符（默认 public）' })
+      return
+    }
+    setSnmpSaving(true)
+    try {
+      await client.updateSettings({ snmpCommunity: trimmed })
+      setSnmpDirty(false)
+      await refresh()
+      toast.success('SNMP community 已保存', { description: '下次「刷新能力」时生效（耗材/状态探测共用）' })
+    } catch (e) {
+      toast.error('保存失败', { description: (e as Error).message })
+    } finally {
+      setSnmpSaving(false)
     }
   }
 
@@ -191,6 +220,41 @@ export function PairingView() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="min-w-0">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Radio className="size-4 text-muted-foreground" aria-hidden />
+            SNMP 探测设置（Host）
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="snmp-community">community 字符串（v1/v2c，用于墨量 / 缺纸 / 卡纸探测）</Label>
+            <div className="flex gap-2">
+              <Input
+                id="snmp-community"
+                value={snmpDraft}
+                onChange={(e) => {
+                  setSnmpDraft(e.target.value)
+                  setSnmpDirty(true)
+                }}
+                placeholder="public"
+                className="min-w-0 flex-1 font-mono text-xs"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <Button className="shrink-0" onClick={() => void saveSnmpCommunity()} disabled={snmpSaving || !snmpDirty || snmpDraft.trim() === (settings?.snmpCommunity ?? 'public')}>
+                {snmpSaving ? '保存中…' : '保存'}
+              </Button>
+            </div>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+            企业级打印机（Ricoh / Kyocera / KM / Xerox 等）常将 SNMP community 改为非默认值；修改后到打印机页「刷新能力」即可用新值重试探测。
+            读取不到时墨量显示 UNKNOWN（不代表不支持），详见故障排查文档。
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">

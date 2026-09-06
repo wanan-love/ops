@@ -25,7 +25,7 @@ export class SettingsStore {
     return { ...this.settings }
   }
 
-  async patch(patch: Partial<Pick<HostSettings, 'hostName' | 'securityMode'>>): Promise<HostSettings> {
+  async patch(patch: Partial<Pick<HostSettings, 'hostName' | 'securityMode' | 'snmpCommunity'>>): Promise<HostSettings> {
     this.settings = { ...this.settings, ...patch }
     await this.storage.writeJson(REL, this.settings)
     return this.get()
