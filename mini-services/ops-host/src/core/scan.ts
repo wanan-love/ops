@@ -93,7 +93,7 @@ export class ScanManager {
 
   // ---------------------------------------------------------------- 设备
 
-  /** 设备列表：vscan 静态档案 + 手动添加（mdns 结果不持久化，由 mdnsScan 实时返回） */
+  /** 设备列表：vscan 静态档案（含双面能力）+ 手动添加（mdns 结果不持久化，由 mdnsScan 实时返回） */
   async listDevices(vscan: VirtualScanServer | null): Promise<ScanDevice[]> {
     const out: ScanDevice[] = []
     const now = new Date().toISOString()
@@ -108,7 +108,7 @@ export class ScanManager {
         } catch {
           /* 保底 127.0.0.1 */
         }
-        out.push({ id: info.id, name: info.name, host, port, baseUrl: info.baseUrl, source: 'vscan', lastSeenAt: now })
+        out.push({ id: info.id, name: info.name, host, port, baseUrl: info.baseUrl, source: 'vscan', duplexCap: info.duplex ? 'yes' : 'no', lastSeenAt: now })
       }
     }
     out.push(...this.manualDevices)
@@ -150,13 +150,15 @@ export class ScanManager {
     return out
   }
 
-  /** 手动添加：EsclClient.getScannerStatus 探活（失败 throw），持久化 scan-devices.json */
+  /** 手动添加：EsclClient.getScannerStatus 探活（失败 throw）+ 双面能力探测（三态，不抛错），持久化 scan-devices.json */
   async addDevice(baseUrl: string, name?: string): Promise<ScanDevice> {
     const base = baseUrl.trim().replace(/\/+$/, '')
     if (!/^https?:\/\//i.test(base)) throw new Error('baseUrl 必须以 http:// 或 https:// 开头')
     if (this.manualDevices.some((d) => d.baseUrl === base)) throw new Error(`扫描仪已添加（baseUrl 重复：${base}）`)
     // 探活：GET {base}/eSCL/ScannerStatus（传输/HTTP 错误原样抛给路由层）
     const status = await this.escl.getScannerStatus(base)
+    // 双面能力探测（能力三态：探测失败 ≠ 不支持，归 unknown，不抛错）
+    const caps = await this.escl.getScannerCapabilities(base).catch(() => ({ duplex: 'unknown' as const, raw: '' }))
     let host = 'unknown'
     let port = 80
     try {
@@ -174,11 +176,13 @@ export class ScanManager {
       baseUrl: base,
       source: 'manual',
       txt: { state: status.state },
+      duplexCap: caps.duplex,
       lastSeenAt: new Date().toISOString(),
     }
     this.manualDevices.push(device)
     await this.persistDevices()
-    this.opts.log.record({ type: 'discovery', topic: 'scan', message: `手动添加扫描设备：${device.name}（${base}，ScannerStatus=${status.state}）` })
+    const duplexLabel = caps.duplex === 'yes' ? '支持双面' : caps.duplex === 'no' ? '不支持双面' : '双面能力未知（ScannerCapabilities 无 Duplex）'
+    this.opts.log.record({ type: 'discovery', topic: 'scan', message: `手动添加扫描设备：${device.name}（${base}，ScannerStatus=${status.state}，${duplexLabel}）` })
     return device
   }
 
@@ -197,8 +201,13 @@ export class ScanManager {
   /** 提交扫描：eSCL CreateScanJob → 后台异步逐页取图（立即返回 202 语义的 job） */
   async startScan(
     device: ScanDevice,
-    opts: { format: 'image/png' | 'application/pdf'; dpi: number; colorMode: 'RGB' | 'Grayscale'; inputSource: 'Platen' | 'Feeder' },
+    opts: { format: 'image/png' | 'application/pdf'; dpi: number; colorMode: 'RGB' | 'Grayscale'; inputSource: 'Platen' | 'Feeder'; duplex?: boolean },
   ): Promise<ScanJob> {
+    // 语义校验：双面仅对送稿器有效（与 vscan / 真实 eSCL 设备行为一致）
+    if (opts.duplex && opts.inputSource !== 'Feeder') {
+      throw new Error('双面扫描仅支持送稿器（Feeder）输入源：平板无法双面扫描')
+    }
+    const duplex = opts.duplex === true
     const job: ScanJob = {
       id: `scan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       deviceId: device.id,
@@ -208,10 +217,12 @@ export class ScanManager {
       dpi: opts.dpi,
       colorMode: opts.colorMode,
       inputSource: opts.inputSource,
+      duplex,
       pagesDone: 0,
-      // 先按 inputSource 推定（Feeder=2, Platen=1），实际以取页为准，完成后 pagesTotal=pagesDone
-      pagesTotal: opts.inputSource === 'Feeder' ? 2 : 1,
+      // 先按 inputSource+duplex 推定（Feeder 单面 2 / 双面 4，Platen 1），实际以取页为准，完成后 pagesTotal=pagesDone
+      pagesTotal: opts.inputSource === 'Feeder' ? (duplex ? 4 : 2) : 1,
       images: [],
+      pageSides: duplex ? [] : undefined,
       error: null,
       startedAt: new Date().toISOString(),
       finishedAt: null,
@@ -223,6 +234,7 @@ export class ScanManager {
       dpi: opts.dpi,
       colorMode: opts.colorMode,
       inputSource: opts.inputSource,
+      duplex,
     })
     job.state = 'scanning'
     const stored: StoredScanJob = { job, esclJobUrl: jobUrl }
@@ -232,8 +244,8 @@ export class ScanManager {
     this.opts.log.record({
       type: 'job',
       topic: `scan:${job.state}`,
-      message: `扫描任务已提交：${job.id}（${device.name}，${opts.dpi}dpi ${opts.colorMode} ${opts.inputSource}）`,
-      data: { jobId: job.id, deviceId: device.id, esclJobUrl: jobUrl },
+      message: `扫描任务已提交：${job.id}（${device.name}，${opts.dpi}dpi ${opts.colorMode} ${opts.inputSource}${duplex ? ' 双面' : ''}）`,
+      data: { jobId: job.id, deviceId: device.id, esclJobUrl: jobUrl, duplex },
     })
     void this.runScanJob(stored, device)
     return job
@@ -267,6 +279,8 @@ export class ScanManager {
         await fs.writeFile(filePath, page)
         job.pagesDone = n
         job.images.push(`page-${n}.png`)
+        // 双面任务：与 vscan / 真实 ADF 一致，奇数页正面、偶数页背面（纸1正/纸1反/纸2正/纸2反）
+        if (job.pageSides) job.pageSides.push(n % 2 === 1 ? 'front' : 'back')
         await this.persistJob(stored)
         this.opts.bus.emit('scan:update', { job })
         if (job.state === 'cancelled') return // 取消发生在取页飞行中：保留已取页数后退出

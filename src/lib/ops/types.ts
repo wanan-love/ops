@@ -297,7 +297,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.4.0'
+export const OPS_VERSION = '0.4.1'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',
@@ -333,6 +333,8 @@ export interface ScanDevice {
   baseUrl: string
   source: ScanDeviceSource
   txt?: Record<string, string>
+  /** 双面扫描能力三态（vscan 静态已知 / manual 添加时探测 / mdns 未探测） */
+  duplexCap?: 'yes' | 'no' | 'unknown'
   lastSeenAt: string
 }
 
@@ -355,9 +357,13 @@ export interface ScanJob {
   dpi: number
   colorMode: 'RGB' | 'Grayscale'
   inputSource: 'Platen' | 'Feeder'
+  /** 双面扫描（仅 Feeder；页序 = 纸1正/纸1反/纸2正/纸2反） */
+  duplex?: boolean
   pagesDone: number
   pagesTotal: number
   images: string[]
+  /** 每页正反面标识（与 images 索引对齐；非双面任务为 undefined） */
+  pageSides?: Array<'front' | 'back'>
   /** 按需 PDF 导出结果（null/undefined = 未导出） */
   pdf?: ScanJobPdfExport | null
   error: string | null

@@ -8,8 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useOpsClient, useOpsStore } from './store'
-import { useDevice, useSavedHosts, useUpdateDeviceName, removeSavedHost, upsertSavedHost, type SavedHost } from '@/lib/ops/hooks'
-import { createOpsClient, restUrl } from '@/lib/ops/client'
+import { useDevice, useSavedHosts, useUpdateDeviceName, useConsoleToken, removeSavedHost, upsertSavedHost, type SavedHost } from '@/lib/ops/hooks'
+import { createOpsClient } from '@/lib/ops/client'
 import { formatTime } from './widgets'
 
 export function DiscoveryView() {
@@ -26,6 +26,7 @@ export function DiscoveryView() {
   const [manualChecking, setManualChecking] = useState(false)
   const savedHosts = useSavedHosts()
   const device = useDevice()
+  const consoleToken = useConsoleToken()
   const updateDeviceName = useUpdateDeviceName()
   const [deviceName, setDeviceName] = useState<string | null>(null)
   const nameValue = deviceName ?? device.deviceName
@@ -189,11 +190,15 @@ export function DiscoveryView() {
                 </Button>
               </div>
             </div>
-            <div className="rounded-md bg-muted/60 p-3 font-mono text-[11px] text-muted-foreground">
-              <p>deviceId: {device.deviceId}</p>
+            <div className="overflow-x-auto rounded-md bg-muted/60 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground [scrollbar-width:thin]">
+              <p className="break-all">deviceId: {device.deviceId}</p>
               <p>platform: web（浏览器客户端）</p>
-              <p>连接: {connected ? `${hostInfo?.hostName} :${restPort}` : '未连接'}</p>
-              <p>协议: {restUrl(restPort, '/…')}（经网关 XTransformPort）</p>
+              <p className="break-all">连接: {connected ? `${hostInfo?.hostName} :${restPort}` : '未连接'}</p>
+              {/* 展示用示例 URL 不注入 opsToken（restUrl 会自动附令牌，明文展示有泄露观感且长串溢出）；仅提示存在令牌注入 */}
+              <p className="break-all">
+                协议: /api/…?XTransformPort={restPort}
+                {consoleToken ? <span className="text-amber-600 dark:text-amber-400">（请求自动附加 opsToken=…）</span> : ''}（经网关 XTransformPort）
+              </p>
             </div>
           </CardContent>
         </Card>

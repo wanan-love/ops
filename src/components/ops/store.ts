@@ -54,7 +54,7 @@ interface OpsState {
   refresh: () => Promise<void>
   refreshScan: () => Promise<void>
   scanMdns: () => Promise<ScanDevice[]>
-  startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }) => Promise<ScanJob>
+  startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string; duplex?: boolean }) => Promise<ScanJob>
   cancelScanJob: (id: string) => Promise<ScanJob>
   deleteScanJob: (id: string) => Promise<void>
   exportScanPdf: (id: string) => Promise<ScanJob>

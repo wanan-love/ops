@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.4.0'
+export const OPS_VERSION = '0.4.1'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -361,6 +361,8 @@ export interface ScanDevice {
   baseUrl: string
   source: 'vscan' | 'mdns' | 'manual'
   txt?: Record<string, string>
+  /** 双面扫描能力三态（vscan 静态已知 / manual 添加时探测 / mdns 未探测） */
+  duplexCap?: 'yes' | 'no' | 'unknown'
   lastSeenAt: string
 }
 
@@ -387,9 +389,13 @@ export interface ScanJob {
   dpi: number
   colorMode: 'RGB' | 'Grayscale'
   inputSource: 'Platen' | 'Feeder'
+  /** 双面扫描（仅 Feeder 有效；vscan 模拟 2 张纸 → 4 页正反交替） */
+  duplex?: boolean
   pagesDone: number
   pagesTotal: number
   images: string[]
+  /** 每页正反面标识（与 images 索引对齐；非双面任务为 undefined） */
+  pageSides?: Array<'front' | 'back'>
   /** 按需 PDF 导出结果（null/undefined = 未导出；仅 completed 任务可导出） */
   pdf?: ScanJobPdfExport | null
   error: string | null

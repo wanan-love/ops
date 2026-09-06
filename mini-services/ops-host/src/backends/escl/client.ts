@@ -22,6 +22,8 @@ export interface EsclScanRequest {
   dpi: number
   colorMode: 'RGB' | 'Grayscale'
   inputSource: 'Platen' | 'Feeder'
+  /** 双面扫描（eSCL <scan:Duplex>true；仅 Feeder 语义有效，调用方校验） */
+  duplex?: boolean
 }
 
 /** eSCL HTTP 层错误（含状态码，供调用方区分 404 取完 / 409 未就绪等语义） */
@@ -100,6 +102,7 @@ export function buildScanSettingsXml(req: EsclScanRequest): Buffer {
     '    <scan:ContentRegionUnits>escl:ThreeHundredthsOfInches</scan:ContentRegionUnits>\n' +
     '  </scan:ScanRegion></scan:ScanRegions>\n' +
     `  <scan:InputSource>${req.inputSource}</scan:InputSource>\n` +
+    (req.duplex ? '  <scan:Duplex>true</scan:Duplex>\n' : '') +
     `  <scan:DocumentFormat>${req.format}</scan:DocumentFormat>\n` +
     `  <scan:XResolution>${req.dpi}</scan:XResolution>\n` +
     `  <scan:YResolution>${req.dpi}</scan:YResolution>\n` +
@@ -157,6 +160,26 @@ export class EsclClient {
     }
     const raw = res.data.toString('utf8')
     return { state: xmlTag(raw, 'State') ?? 'Unknown', raw }
+  }
+
+  /**
+   * GET {base}/eSCL/ScannerCapabilities — 双面能力探测。
+   * 能力三态：①端点 200 且含 <scan:Duplex>true → 'yes' ②200 且显式非 true → 'no'
+   * ③端点 404/405 / 无 Duplex 元素 / 传输错误 / 非 2xx → 'unknown'（探测失败≠设备不支持，不抛错）
+   */
+  async getScannerCapabilities(baseUrl: string): Promise<{ duplex: 'yes' | 'no' | 'unknown'; raw: string }> {
+    const base = baseUrl.replace(/\/+$/, '')
+    let res: EsclResponse
+    try {
+      res = await esclRequest(`${base}/eSCL/ScannerCapabilities`, 'GET', undefined, { accept: 'application/xml' }, this.timeoutMs)
+    } catch {
+      return { duplex: 'unknown', raw: '' }
+    }
+    if (res.status < 200 || res.status >= 300) return { duplex: 'unknown', raw: '' }
+    const raw = res.data.toString('utf8')
+    const duplexRaw = xmlTag(raw, 'Duplex')
+    if (duplexRaw === null) return { duplex: 'unknown', raw }
+    return { duplex: /^true$/i.test(duplexRaw.trim()) ? 'yes' : 'no', raw }
   }
 
   /** POST {base}/eSCL/ScanJobs — body=ScanSettings XML，201 后取 Location 头（相对路径拼 baseUrl origin） */

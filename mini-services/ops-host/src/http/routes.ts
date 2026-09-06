@@ -283,7 +283,7 @@ export function buildRouter(): Router {
   })
 
   router.post('/api/scan/jobs', async (ctx, _req, res, _params, _query, body) => {
-    const input = parseJsonBody<{ deviceId?: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }>(body)
+    const input = parseJsonBody<{ deviceId?: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string; duplex?: boolean }>(body)
     if (!input?.deviceId) return sendError(res, 400, '请求体必须包含 deviceId 字段')
     const devices = await ctx.scan.listDevices(ctx.vscan)
     const device = devices.find((d) => d.id === input.deviceId)
@@ -293,8 +293,13 @@ export function buildRouter(): Router {
     const format = input.format === 'application/pdf' ? ('application/pdf' as const) : ('image/png' as const)
     const colorMode = input.colorMode === 'Grayscale' ? ('Grayscale' as const) : ('RGB' as const)
     const inputSource = input.inputSource === 'Feeder' ? ('Feeder' as const) : ('Platen' as const)
+    const duplex = input.duplex === true
+    // 双面语义校验（路由层先行拦截：Platen + duplex 组合无意义）
+    if (duplex && inputSource !== 'Feeder') {
+      return sendError(res, 400, '双面扫描仅支持送稿器（Feeder）：平板无法双面，请关闭双面或切换输稿器')
+    }
     try {
-      const job = await ctx.scan.startScan(device, { format, dpi, colorMode, inputSource })
+      const job = await ctx.scan.startScan(device, { format, dpi, colorMode, inputSource, duplex })
       sendJson(res, 202, { job })
     } catch (err) {
       sendError(res, 400, `创建扫描任务失败：${err instanceof Error ? err.message : String(err)}`)

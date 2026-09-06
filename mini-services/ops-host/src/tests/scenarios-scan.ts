@@ -3,13 +3,15 @@ import type { ScenarioApi } from './selftest'
 import { ScenarioSkipped } from './selftest'
 
 /**
- * eSCL 扫描场景（P3，Virtual eSCL Scanner :3065 提供可验证链路）：
+ * eSCL 扫描场景（P3 + P4 Duplex，Virtual eSCL Scanner :3065 提供可验证链路）：
  *  16. escl-full-flow  扫描全链路（vscan）：设备列表 → Platen 单页（PNG 魔数/IHDR 校验）
  *      → ADF Feeder 多页（2 页）→ 150dpi 取消（cancelled / 已完成容许）
  *  17. scan-pdf-export  按需 PDF 导出（P3.5）：Feeder 2 页 → export-pdf → 魔数/页数/元数据
  *      校验 → 幂等复用 → 未完成任务导出应报错（用已取消任务验证容错）
+ *  19. escl-duplex      双面扫描（P4）：设备能力（flatbed no / adf yes）→ Feeder+Duplex 4 页
+ *      正反交替（pageSides + 图像内容差异）→ 平板+双面 400 拒绝 → 双面 PDF 导出 4 页
  */
-export type ScanScenarioId = 'escl-full-flow' | 'scan-pdf-export'
+export type ScanScenarioId = 'escl-full-flow' | 'scan-pdf-export' | 'escl-duplex'
 
 export interface ScanScenario {
   id: ScanScenarioId
@@ -126,6 +128,82 @@ export const scanScenarios: ScanScenario[] = [
         api.expect(rejected, `取消状态任务导出应报错（${job2.id}）`)
       } else {
         api.step('容错校验跳过', '取消任务恰好在容许窗口内完成（completed），跳过状态校验')
+      }
+    },
+  },
+  {
+    id: 'escl-duplex',
+    name: '双面扫描（P4 · Feeder Duplex）',
+    description: '设备双面能力三态（flatbed=no / adf=yes）→ Feeder+Duplex 4 页正反交替（pageSides + 图像内容差异）→ 平板+双面 400 拒绝 → 双面 PDF 导出 4 页',
+    async run(api) {
+      if (!api.vscanAvailable()) throw new ScenarioSkipped('Virtual eSCL Scanner 未启用（OPS_VSCAN_ENABLED=0）')
+
+      // 1) 设备双面能力三态（vscan 静态注入）
+      const devices = await api.scanDevices()
+      const adf = devices.find((d) => d.id === 'vscan-adf')
+      const flatbed = devices.find((d) => d.id === 'vscan-flatbed')
+      api.expect(adf?.duplexCap === 'yes', `vscan-adf 双面能力应为 yes（实际 ${adf?.duplexCap}）`)
+      api.expect(flatbed?.duplexCap === 'no', `vscan-flatbed 双面能力应为 no（实际 ${flatbed?.duplexCap}）`)
+      api.step('设备双面能力', `flatbed=no / adf=yes（能力三态注入）`)
+
+      // 2) 平板 + 双面 → 语义拒绝（路由层 400，startScan 直调抛错）
+      let rejected = false
+      try {
+        await api.startScan('vscan-flatbed', { format: 'image/png', dpi: 150, colorMode: 'RGB', inputSource: 'Platen', duplex: true })
+      } catch {
+        rejected = true // 预期：平板无法双面
+      }
+      api.expect(rejected, '平板 + duplex 应被拒绝（平板无法双面）')
+      api.step('语义校验', '平板 + 双面 → 拒绝（与路由 400 / vscan 400 一致）')
+
+      // 3) Feeder + Duplex → 4 页正反交替
+      const job = await api.startScan('vscan-adf', { format: 'image/png', dpi: 300, colorMode: 'RGB', inputSource: 'Feeder', duplex: true })
+      api.step('提交双面扫描', `${job.id}（预推 pagesTotal=${job.pagesTotal}）`)
+      api.expect(job.pagesTotal === 4, `预推页数应 4（实际 ${job.pagesTotal}）`)
+      api.expect(job.duplex === true, 'job.duplex 应为 true')
+      const done = await api.waitForScan(job.id, (j) => j.state === 'completed', 30000)
+      api.expect(done.pagesDone === 4, `双面应 4 页（实际 ${done.pagesDone}）`)
+      api.expect(done.pageSides?.length === 4, `pageSides 应 4 项（实际 ${done.pageSides?.length}）`)
+      const expectedSides = ['front', 'back', 'front', 'back']
+      api.expect(
+        done.pageSides?.every((s, i) => s === expectedSides[i]) ?? false,
+        `正反交替应为 front/back/front/back（实际 ${done.pageSides?.join(',')}）`,
+      )
+      api.step('双面页序', `纸1正 / 纸1反 / 纸2正 / 纸2反（${done.pageSides?.join(',')}）`)
+
+      // 4) 正/反页图像内容差异（背面有空心框标记，正面无；顶部色带红黄 vs 蓝绿）
+      const front = await api.scanArtifactBytes(done, 1)
+      const back = await api.scanArtifactBytes(done, 2)
+      api.expect(front !== null && back !== null, '正/反页 PNG 存在')
+      if (front && back) {
+        api.expect(front.length !== back.length, `正/反页内容应不同（字节长度差异：正面 ${front.length} vs 背面 ${back.length}）`)
+        // 顶部色带首像素：正面红色系（R>200, G<100）；背面蓝色系（R<100, B>200）
+        // PNG 结构：IHDR 13 + 后续 IDAT 压缩，直接解像素成本高；退而验证字节序列差异 + 长度差异已足够，
+        // 配合 pageSides 语义与渲染逻辑（色带/空心框由 side 决定）已形成双重验证
+        let diff = 0
+        for (let i = 0; i < Math.min(front.length, back.length); i++) {
+          if (front[i] !== back[i]) diff++
+        }
+        api.expect(diff > 100, `正/反页应存在大量字节差异（diff=${diff}，背面含空心框标记）`)
+        api.step('图像差异', `字节差异 ${diff} 处（背面空心框 + 蓝绿色带）`)
+      }
+
+      // 5) 单面对照：非双面任务无 pageSides
+      const simplex = await api.startScan('vscan-adf', { format: 'image/png', dpi: 150, colorMode: 'Grayscale', inputSource: 'Feeder' })
+      const simplexDone = await api.waitForScan(simplex.id, (j) => j.state === 'completed', 30000)
+      api.expect(simplexDone.pagesDone === 2, `单面 Feeder 应 2 页（实际 ${simplexDone.pagesDone}）`)
+      api.expect(simplexDone.pageSides === undefined || simplexDone.pageSides === null, `单面任务不应有 pageSides（实际 ${JSON.stringify(simplexDone.pageSides)}）`)
+      api.expect(simplexDone.duplex !== true, '单面任务 job.duplex 应非 true')
+      api.step('单面对照', `2 页无 pageSides，duplex=${String(simplexDone.duplex)}`)
+
+      // 6) 双面任务 PDF 导出：4 页依序合成
+      const exported = await api.exportScanPdf(done.id)
+      api.expect(exported.pdf?.pages === 4, `双面 PDF 页数应 4（实际 ${exported.pdf?.pages}）`)
+      const pdfBytes = await api.scanPdfBytes(exported)
+      if (pdfBytes) {
+        const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false })
+        api.expect(doc.getPageCount() === 4, `pdf-lib 解析双面 PDF 应 4 页（实际 ${doc.getPageCount()}）`)
+        api.step('双面 PDF', `${doc.getPageCount()} 页依序合成（正反交替保持文档顺序）`)
       }
     },
   },

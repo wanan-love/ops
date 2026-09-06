@@ -65,12 +65,12 @@ function pageDims(dpi: number): { w: number; h: number } {
 
 /**
  * 渲染一页模拟扫描件 PNG（8bit，RGB colorType=2 / Gray colorType=0，非隔行）。
- * 内容：白底 + 顶部 120px 渐变色带（页 1 红黄 / 页 2 蓝绿，Grayscale 转 0.299r+0.587g+0.114b）
+ * 内容：白底 + 顶部 120px 渐变色带（正面红黄 / 背面蓝绿——双面任务正反交替，单面任务页序奇偶交替）
  *       + 中部每 28px 一组 3px 深灰"文字行"条纹 + 左上角 (30,30) 80×80 黑色对齐块
- *       + 右下角 pageIndex 个 20×20 黑方块（页码）。
+ *       + 右下角 pageIndex 个 20×20 黑方块（页码）+ 背面页左上角额外 40×40 空心框（正/反目视区分）。
  */
-export function renderScanPagePng(opts: { pageIndex: number; colorMode: 'RGB' | 'Grayscale'; dpi: number }): Buffer {
-  const { pageIndex, colorMode, dpi } = opts
+export function renderScanPagePng(opts: { pageIndex: number; colorMode: 'RGB' | 'Grayscale'; dpi: number; side?: 'front' | 'back' }): Buffer {
+  const { pageIndex, colorMode, dpi, side } = opts
   const { w, h } = pageDims(dpi)
   const gray = colorMode === 'Grayscale'
   const bpp = gray ? 1 : 3 // bytes per pixel
@@ -96,9 +96,9 @@ export function renderScanPagePng(opts: { pageIndex: number; colorMode: 'RGB' | 
   // 白底
   fill(0, 0, w, h, 255, 255, 255)
 
-  // 顶部 120px 渐变色带：页 1 红→黄 / 页 2 蓝→绿（横向渐变）
+  // 顶部 120px 渐变色带：双面任务按 side（front 红黄 / back 蓝绿）；单面任务按页序奇偶交替
   const bandH = Math.min(120, h - 1)
-  const redYellow = pageIndex % 2 === 1
+  const redYellow = side === undefined ? pageIndex % 2 === 1 : side === 'front'
   for (let y = 0; y < bandH; y++) {
     for (let x = 0; x < w; x++) {
       const t = w > 1 ? x / (w - 1) : 0
@@ -121,6 +121,20 @@ export function renderScanPagePng(opts: { pageIndex: number; colorMode: 'RGB' | 
 
   // 左上角 (30,30) 起 80×80 黑色对齐块
   fill(30, 30, 30 + 80, 30 + 80, 0, 0, 0)
+
+  // 背面页专属标记：对齐块右侧 40×40 空心框（正/反目视区分，配合顶部色带双保险）
+  if (side === 'back') {
+    const bx0 = 30 + 80 + 20
+    const by0 = 30
+    for (let x = bx0; x < bx0 + 40; x++) {
+      put(x, by0, 0, 0, 0)
+      put(x, by0 + 39, 0, 0, 0)
+    }
+    for (let y = by0; y < by0 + 40; y++) {
+      put(bx0, y, 0, 0, 0)
+      put(bx0 + 39, y, 0, 0, 0)
+    }
+  }
 
   // 右下角 pageIndex 个 20×20 黑方块（页码，从右向左排列）
   for (let i = 0; i < pageIndex; i++) {
@@ -162,6 +176,8 @@ interface VscanJob {
   uuid: string
   createdAt: number
   source: 'Platen' | 'Feeder'
+  /** 双面（仅 Feeder：2 张纸 → 4 页正反交替；Platen+Duplex 会被 400 拒绝） */
+  duplex: boolean
   format: string
   dpi: number
   colorMode: 'RGB' | 'Grayscale'
@@ -182,6 +198,8 @@ export interface VscanDeviceInfo {
   name: string
   label: string
   baseUrl: string
+  /** 双面能力（ADF 档案支持，Flatbed 不支持；供 ScanManager 设备列表静态注入） */
+  duplex: boolean
 }
 
 export class VirtualScanServer {
@@ -239,7 +257,7 @@ export class VirtualScanServer {
 
   /** 供 mDNS 通告 / ScanManager 设备列表使用 */
   list(): VscanDeviceInfo[] {
-    return PROFILES.map((p) => ({ ...p, baseUrl: `http://127.0.0.1:${this.port}` }))
+    return PROFILES.map((p) => ({ ...p, baseUrl: `http://127.0.0.1:${this.port}`, duplex: p.label === 'ADF' }))
   }
 
   /** 当前是否有未完成任务（ScannerStatus 用：Idle / Processing） */
@@ -295,6 +313,44 @@ export class VirtualScanServer {
       return
     }
 
+    // GET /eSCL/ScannerCapabilities —— 能力 XML（双面能力按 ADF/Flatbed 档案区分）
+    if (method === 'GET' && path === '/eSCL/ScannerCapabilities') {
+      // 无档案指定时返回 ADF（完整能力集）：真实 eSCL 每台设备一个端点，此处两档案共用端口，
+      // 以查询参数 profile 区分（缺省 ADF）；仅含本实现关心的最小能力集（Duplex + 双 InputSource）
+      const profile = url.searchParams.get('profile') ?? 'adf'
+      const isAdf = profile === 'adf'
+      const xml =
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
+        '<scan:ScannerCapabilities xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03">\n' +
+        '  <scan:Version>2.1</scan:Version>\n' +
+        '  <scan:Platen>\n' +
+        '    <scan:PlatenInputCaps>\n' +
+        '      <scan:MinWidth>50</scan:MinWidth><scan:MaxWidth>2550</scan:MaxWidth>\n' +
+        '      <scan:MinHeight>50</scan:MinHeight><scan:MaxHeight>3507</scan:MaxHeight>\n' +
+        '      <scan:MaxScanRegions>1</scan:MaxScanRegions>\n' +
+        '      <scan:SettingProfiles><scan:SettingProfile>\n' +
+        '        <scan:ColorModes><scan:ColorMode>RGB</scan:ColorMode><scan:ColorMode>Grayscale</scan:ColorMode></scan:ColorModes>\n' +
+        '        <scan:Resolutions><scan:Resolution>75</scan:Resolution><scan:Resolution>150</scan:Resolution><scan:Resolution>300</scan:Resolution><scan:Resolution>600</scan:Resolution></scan:Resolutions>\n' +
+        '      </scan:SettingProfile></scan:SettingProfiles>\n' +
+        '    </scan:PlatenInputCaps>\n' +
+        '  </scan:Platen>\n' +
+        '  <scan:Feeder>\n' +
+        '    <scan:FeederCaps>\n' +
+        '      <scan:MinWidth>50</scan:MinWidth><scan:MaxWidth>2550</scan:MaxWidth>\n' +
+        '      <scan:MinHeight>50</scan:MinHeight><scan:MaxHeight>3507</scan:MaxHeight>\n' +
+        '      <scan:MaxScanRegions>1</scan:MaxScanRegions>\n' +
+        `      <scan:Duplex>${isAdf}</scan:Duplex>\n` +
+        '      <scan:SettingProfiles><scan:SettingProfile>\n' +
+        '        <scan:ColorModes><scan:ColorMode>RGB</scan:ColorMode><scan:ColorMode>Grayscale</scan:ColorMode></scan:ColorModes>\n' +
+        '        <scan:Resolutions><scan:Resolution>75</scan:Resolution><scan:Resolution>150</scan:Resolution><scan:Resolution>300</scan:Resolution><scan:Resolution>600</scan:Resolution></scan:Resolutions>\n' +
+        '      </scan:SettingProfile></scan:SettingProfiles>\n' +
+        '    </scan:FeederCaps>\n' +
+        '  </scan:Feeder>\n' +
+        '</scan:ScannerCapabilities>\n'
+      this.sendXml(res, 200, xml)
+      return
+    }
+
     // POST /eSCL/ScanJobs —— 创建扫描任务
     if (method === 'POST' && path === '/eSCL/ScanJobs') {
       const body = (await this.readBody(req)).toString('utf8')
@@ -303,15 +359,23 @@ export class VirtualScanServer {
         return m ? m[1]! : null
       }
       const inputSource = pick('InputSource') === 'Feeder' ? 'Feeder' : 'Platen'
+      const duplex = /^true$/i.test(pick('Duplex') ?? 'false')
+      // 语义校验：双面仅对送稿器有意义（平板双面 400，对齐真实 eSCL 设备行为）
+      if (duplex && inputSource !== 'Feeder') {
+        this.sendJson(res, 400, { error: 'Duplex 仅支持 Feeder（送稿器）输入源：平板无法双面扫描' })
+        return
+      }
       const format = pick('DocumentFormat') ?? 'image/png'
       const dpi = Number(pick('XResolution') ?? 300) || 300
       const colorMode = pick('ColorMode') === 'Grayscale' ? 'Grayscale' : 'RGB'
       const uuid = randomUUID()
-      const pagesTotal = inputSource === 'Feeder' ? 2 : 1 // ADF 档案送纸器 2 页；平板 1 页
+      // 页数：Feeder 单面 2 页 / Feeder 双面 4 页（2 张纸 × 正反）/ Platen 1 页
+      const pagesTotal = inputSource === 'Feeder' ? (duplex ? 4 : 2) : 1
       this.jobs.set(uuid, {
         uuid,
         createdAt: Date.now(),
         source: inputSource,
+        duplex,
         format,
         dpi,
         colorMode,
@@ -320,7 +384,7 @@ export class VirtualScanServer {
         readyAt: Date.now() + SCAN_READY_DELAY_MS,
         canceled: false,
       })
-      console.log(`[vscan] job 创建：${uuid}（source=${inputSource}，format=${format}，dpi=${dpi}，colorMode=${colorMode}，pages=${pagesTotal}）`)
+      console.log(`[vscan] job 创建：${uuid}（source=${inputSource}${duplex ? ' + Duplex' : ''}，format=${format}，dpi=${dpi}，colorMode=${colorMode}，pages=${pagesTotal}）`)
       res.writeHead(201, { location: `/eSCL/ScanJobs/${uuid}`, 'content-type': 'application/xml; charset=utf-8' })
       res.end()
       return
@@ -359,9 +423,11 @@ export class VirtualScanServer {
           return
         }
         const pageIndex = job.pagesTaken + 1
-        const png = renderScanPagePng({ pageIndex, colorMode: job.colorMode, dpi: job.dpi })
+        // 双面任务：页序 = 纸1正 / 纸1反 / 纸2正 / 纸2反（奇数页 front、偶数页 back）
+        const side: 'front' | 'back' | undefined = job.duplex ? (pageIndex % 2 === 1 ? 'front' : 'back') : undefined
+        const png = renderScanPagePng({ pageIndex, colorMode: job.colorMode, dpi: job.dpi, side })
         job.pagesTaken++
-        console.log(`[vscan] job 取页：${uuid} 第 ${pageIndex}/${job.pagesTotal} 页（${png.length} bytes，${job.colorMode}，${job.dpi}dpi）`)
+        console.log(`[vscan] job 取页：${uuid} 第 ${pageIndex}/${job.pagesTotal} 页${side ? `（${side === 'front' ? '正面' : '背面'}）` : ''}（${png.length} bytes，${job.colorMode}，${job.dpi}dpi）`)
         res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(png.length), 'cache-control': 'no-store' })
         res.end(png)
         return

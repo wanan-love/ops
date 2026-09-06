@@ -251,7 +251,7 @@ export function createOpsClient(port: number) {
     addScanDevice: (input: { baseUrl: string; name?: string }) =>
       request<{ device: ScanDevice }>(port, 'POST', '/scan/devices', { json: input }),
     removeScanDevice: (id: string) => request<{ ok: boolean }>(port, 'DELETE', `/scan/devices/${encodeURIComponent(id)}`),
-    startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }) =>
+    startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string; duplex?: boolean }) =>
       request<{ job: ScanJob }>(port, 'POST', '/scan/jobs', { json: input }),
     scanJobs: () => request<{ jobs: ScanJob[] }>(port, 'GET', '/scan/jobs'),
     cancelScanJob: (id: string) => request<{ job: ScanJob }>(port, 'POST', `/scan/jobs/${encodeURIComponent(id)}/cancel`),

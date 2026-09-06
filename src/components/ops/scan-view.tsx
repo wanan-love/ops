@@ -5,9 +5,13 @@ import { toast } from 'sonner'
 import {
   ChevronLeft,
   ChevronRight,
+  Copy,
   Download,
+  FileDown,
   FileImage,
   FileText,
+  FileUp,
+  Layers,
   Loader2,
   Plus,
   RadioTower,
@@ -35,6 +39,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import type { ScanDeviceSource, ScanJob, ScanJobState } from '@/lib/ops/types'
 import { SCAN_JOB_STATE_LABEL } from '@/lib/ops/types'
@@ -87,15 +92,18 @@ interface ScanFormState {
   dpi: number
   colorMode: 'RGB' | 'Grayscale'
   inputSource: 'Platen' | 'Feeder'
+  /** 双面（仅送稿器；设备能力 no 时强制 false） */
+  duplex: boolean
 }
 
-/** 扫描参数摘要（dpi · 色彩 · 输源 · 耗时） */
+/** 扫描参数摘要（dpi · 色彩 · 输源 · 双面 · 耗时） */
 function jobSummary(job: ScanJob): string {
   const parts = [
     `${job.dpi} dpi`,
     job.colorMode === 'RGB' ? '彩色' : '灰度',
     job.inputSource === 'Platen' ? '平板' : '送稿器',
   ]
+  if (job.duplex) parts.push('双面')
   if (job.durationMs != null) parts.push(`耗时 ${formatDuration(job.durationMs)}`)
   return parts.join(' · ')
 }
@@ -147,8 +155,9 @@ function ScanJobCard({ job }: { job: ScanJob }) {
         dpi: job.dpi,
         colorMode: job.colorMode,
         inputSource: job.inputSource,
+        duplex: job.duplex === true && job.inputSource === 'Feeder',
       })
-      toast.success('已提交扫描任务', { description: `${job.deviceName} · ${job.dpi} dpi` })
+      toast.success('已提交扫描任务', { description: `${job.deviceName} · ${job.dpi} dpi${job.duplex ? ' · 双面' : ''}` })
     } catch (e) {
       toast.error('提交失败', { description: (e as Error).message })
     }
@@ -263,7 +272,7 @@ function ScanJobCard({ job }: { job: ScanJob }) {
       {job.state === 'completed' ? (
         <div className="space-y-2">
           <div
-            className="rounded-md border p-2"
+            className="relative rounded-md border p-2"
             style={{
               backgroundImage:
                 'linear-gradient(45deg,#e4e4e7 25%,transparent 25%),linear-gradient(-45deg,#e4e4e7 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e4e4e7 75%),linear-gradient(-45deg,transparent 75%,#e4e4e7 75%)',
@@ -273,10 +282,28 @@ function ScanJobCard({ job }: { job: ScanJob }) {
           >
             <img
               src={client.scanImageUrl(job.id, page)}
-              alt={`扫描结果第 ${page} 页`}
+              alt={`扫描结果第 ${page} 页${job.pageSides?.[page - 1] === 'back' ? '（背面）' : ''}`}
               className="mx-auto h-40 object-contain"
               loading="lazy"
             />
+            {/* 双面任务：正/反页角标（与 vscan 渲染一致：正面红黄带 / 背面蓝绿带 + 空心框） */}
+            {job.pageSides?.[page - 1] ? (
+              <span
+                className={cn(
+                  'absolute right-1 top-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shadow-sm',
+                  job.pageSides[page - 1] === 'front'
+                    ? 'bg-red-500/15 text-red-700 ring-1 ring-red-500/30 dark:text-red-400'
+                    : 'bg-blue-500/15 text-blue-700 ring-1 ring-blue-500/30 dark:text-blue-400',
+                )}
+              >
+                {job.pageSides[page - 1] === 'front' ? (
+                  <FileUp className="size-2.5" aria-hidden />
+                ) : (
+                  <FileDown className="size-2.5" aria-hidden />
+                )}
+                {job.pageSides[page - 1] === 'front' ? '正面' : '背面'} · 第 {page} 张
+              </span>
+            ) : null}
           </div>
           {pageCount > 1 ? (
             <div className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
@@ -400,7 +427,7 @@ export function ScanView() {
   const [mdnsScanning, setMdnsScanning] = useState(false)
   const [addingManual, setAddingManual] = useState(false)
   const [manualUrl, setManualUrl] = useState('')
-  const [form, setForm] = useState<ScanFormState>({ dpi: 300, colorMode: 'RGB', inputSource: 'Platen' })
+  const [form, setForm] = useState<ScanFormState>({ dpi: 300, colorMode: 'RGB', inputSource: 'Platen', duplex: false })
 
   // 挂载 + 连接恢复时刷新扫描设备与任务
   useEffect(() => {
@@ -412,6 +439,13 @@ export function ScanView() {
     () => scanDevices.find((d) => d.id === selectedDeviceId) ?? scanDevices[0] ?? null,
     [scanDevices, selectedDeviceId],
   )
+
+  // 双面可用性：输入源须为送稿器，且设备能力非明确不支持（unknown 允许尝试，如实呈现）
+  const duplexAvailable = form.inputSource === 'Feeder' && selectedDevice?.duplexCap !== 'no'
+  // 环境变化自动复位：切平板 / 切到不支持双面的设备时强制关闭，避免提交 400
+  useEffect(() => {
+    if (!duplexAvailable && form.duplex) setForm((f) => ({ ...f, duplex: false }))
+  }, [duplexAvailable, form.duplex])
 
   const handleMdns = async () => {
     setMdnsScanning(true)
@@ -427,6 +461,10 @@ export function ScanView() {
 
   const submit = async () => {
     if (!selectedDevice) return
+    if (form.duplex && !duplexAvailable) {
+      toast.error('无法双面扫描', { description: '双面仅支持送稿器且设备需具备双面能力' })
+      return
+    }
     setSubmitting(true)
     try {
       await startScan({
@@ -435,8 +473,11 @@ export function ScanView() {
         dpi: form.dpi,
         colorMode: form.colorMode,
         inputSource: form.inputSource,
+        duplex: form.duplex,
       })
-      toast.success('已提交扫描任务', { description: `${selectedDevice.name} · ${form.dpi} dpi` })
+      toast.success('已提交扫描任务', {
+        description: `${selectedDevice.name} · ${form.dpi} dpi${form.duplex ? ' · 双面（正反交替）' : ''}`,
+      })
     } catch (e) {
       toast.error('提交失败', { description: (e as Error).message })
     } finally {
@@ -528,6 +569,25 @@ export function ScanView() {
                               {device.name}
                             </span>
                             <SourceBadge source={device.source} />
+                            {/* 双面能力三态徽章（vscan 静态注入 / manual 探测 / mdns unknown） */}
+                            {device.duplexCap === 'yes' ? (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 gap-0.5 border-emerald-500/40 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-700 dark:text-emerald-400"
+                                title="设备已声明支持双面扫描（ScannerCapabilities Duplex=true）"
+                              >
+                                <Layers className="size-2.5" aria-hidden />
+                                双面
+                              </Badge>
+                            ) : device.duplexCap === 'unknown' ? (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 border-muted-foreground/30 px-1.5 text-[9px] text-muted-foreground/80"
+                                title="双面能力未知（未探测到 ScannerCapabilities Duplex 声明，不代表不支持）"
+                              >
+                                双面?
+                              </Badge>
+                            ) : null}
                           </span>
                           <span
                             className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70"
@@ -649,10 +709,44 @@ export function ScanView() {
                   </Select>
                 </div>
 
+                {/* 双面扫描（仅送稿器；设备能力三态：yes 可用 / no 禁用 + 提示 / unknown 允许尝试） */}
+                <div className={cn('space-y-2 rounded-lg border p-3 transition-colors duration-200', duplexAvailable ? 'border-primary/25 bg-primary/[0.03]' : 'border-dashed')}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <Label htmlFor="scan-duplex" className={cn('flex items-center gap-1.5 text-sm', !duplexAvailable && 'text-muted-foreground/60')}>
+                        <Layers className={cn('size-3.5', duplexAvailable ? 'text-primary' : 'text-muted-foreground/50')} aria-hidden />
+                        双面扫描
+                      </Label>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground/80">
+                        {!duplexAvailable
+                          ? form.inputSource === 'Platen'
+                            ? '平板无法双面 —— 切换到送稿器后可用'
+                            : '该设备已知不支持双面（ScannerCapabilities）'
+                          : selectedDevice?.duplexCap === 'yes'
+                            ? '一次过纸正反两面（页序：纸1正 → 纸1反 → 纸2正 …）'
+                            : '设备双面能力未知 —— 可尝试提交，设备不支持时将返回错误'}
+                      </p>
+                    </div>
+                    <Switch
+                      id="scan-duplex"
+                      checked={form.duplex}
+                      disabled={!duplexAvailable}
+                      onCheckedChange={(v) => setForm((f) => ({ ...f, duplex: v }))}
+                      aria-label="双面扫描开关"
+                    />
+                  </div>
+                  {form.duplex ? (
+                    <p className="flex items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
+                      <Copy className="size-3 shrink-0" aria-hidden />
+                      页序：纸1正 → 纸1反 → 纸2正 → 纸2反（虚拟 ADF 2 张纸 → 4 页）
+                    </p>
+                  ) : null}
+                </div>
+
                 <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
                   <FileImage className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                   <span>
-                    输出 PNG 图像页（逐页预览/下载）；完成后可<span className="text-foreground/80">导出 PDF</span>
+                    输出 PNG 图像页（逐页预览/下载，双面任务带正/反页标识）；完成后可<span className="text-foreground/80">导出 PDF</span>
                     （A4 合成 · 横图自动转横向页）
                   </span>
                 </p>

@@ -186,7 +186,7 @@ export interface ScenarioApi {
   /** 提交扫描任务（记录到 manifest.scanJobIds，全部通过后自动清理） */
   startScan(
     deviceId: string,
-    opts: { format: 'image/png' | 'application/pdf'; dpi: number; colorMode: 'RGB' | 'Grayscale'; inputSource: 'Platen' | 'Feeder' },
+    opts: { format: 'image/png' | 'application/pdf'; dpi: number; colorMode: 'RGB' | 'Grayscale'; inputSource: 'Platen' | 'Feeder'; duplex?: boolean },
   ): Promise<ScanJob>
   /** 读取扫描任务（null = 不存在） */
   scanJob(jobId: string): ScanJob | null

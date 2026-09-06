@@ -464,3 +464,25 @@ Stage Summary:
 - 项目状态：稳定（18/18、lint 0、零溢出、零 console error、8 组 E2E 全绿、WS 恢复逻辑验证）
 - 已知风险/未验证：①令牌为对称共享密钥模型（无用户体系/无吊销列表/无轮换周期，LAN 工具定位够用，企业多管理员场景需升级）②console-token.txt 明文落盘于数据目录（依赖文件系统权限隔离，0600 已设）③CORS allow-origin *（若未来加 cookie/凭据需收紧）④ WS auth:error 仅握手期校验，长连接建立后令牌重生成靠服务端 disconnectSockets 兜底（已实现）⑤真实跨设备场景（非同机浏览器）待真机验证
 - 下一阶段优先建议：①eSCL Duplex 双面扫描（vscan Feeder 正反 4 页 + 双面参数探测）②扫描亮度/对比度 eSCL setting 透传③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Android/iOS 原生化（NsdManager + 令牌管理 UI + PDF 存相册）⑤真实硬件验证（含控制台鉴权跨设备真机流）
+---
+Task ID: 10（QA+P4 Duplex 轮）
+Agent: main-agent
+Task: QA 基线核查（发现并修复 v0.4.0 回归 bug）→ eSCL Duplex 双面扫描全链路（v0.4.1）
+
+Work Log:
+- 开工核查：git c9e1fdc（v0.4.0 控制台鉴权轮）、6 端口全监听、ops-host 单进程正常
+- 【QA 发现并修复 1 个 v0.4.0 回归 bug】discovery-view「本设备身份」卡的协议示例行直接渲染 restUrl() —— v0.4.0 起 restUrl 自动附加 &opsToken=<52 字符控制台令牌> → ①393px 下 88 字符不可断行字符串溢出 232px（10 tab 唯一红点）②控制台令牌明文展示在信息卡（泄露观感）。修复：示例 URL 改为手动拼接（不含令牌）+ 令牌存在时仅显示「请求自动附加 opsToken=…」提示；mono 块加 break-all + overflow-x-auto 纵深防御；修复后 10 tab × [1280/393] 零溢出、18/18 回归通过
+- 【决策】按上轮建议①实施 eSCL Duplex 双面扫描（补齐扫描故事最后一块：真实 ADF 的双面过纸）
+- 【后端 6 文件】①core/types：ScanJob.duplex + pageSides（与 images 索引对齐）+ ScanDevice.duplexCap 三态（yes/no/unknown）②escl/client：EsclScanRequest.duplex → XML <scan:Duplex>true；新增 getScannerCapabilities（能力三态解析：200+Duplex=true→yes / 显式非 true→no / 404·无元素·传输错→unknown 不抛错）③vscan/server：解析 Duplex + Platen+duplex 400 拒绝；Feeder+duplex → 2 张纸 4 页正反交替；渲染按 side 区分（正面红黄带/背面蓝绿带 + 背面专属 40×40 空心框双保险）；新增 GET /eSCL/ScannerCapabilities 端点（Platen/Feeder 能力 XML，?profile 区分档案，ADF Duplex=true）；VscanDeviceInfo.duplex ④core/scan：startScan duplex 透传 + 语义校验 + pageSides 逐页追加（奇正偶反）；listDevices vscan 静态注入 duplexCap；addDevice 添加时探测双面能力并持久化 ⑤http/routes：POST /api/scan/jobs 接受 duplex，Platen+duplex 路由层 400 先行拦截 ⑥场景 19 escl-duplex：设备能力断言（flatbed=no/adf=yes）→ 平板+双面拒绝 → 4 页正反交替（pageSides）→ 正/反页图像字节差异 → 单面对照无 pageSides → 双面 PDF 导出 4 页
+- 【前端 5 文件】types 对齐（duplex/pageSides/duplexCap）；client+store startScan 签名加 duplex；scan-view：①设备列表双面能力徽章（emerald「双面」/ 灰「双面?」带 title 三态说明）②双面扫描卡（Switch + Layers 图标；仅 Feeder 且 duplexCap≠no 可用；状态提示三分支：平板引导切送稿器/已知不支持/未知可尝试；启用后显示页序提示行；边框 dashed 禁用态 ↔ primary/25 启用态过渡）③环境自动复位 effect（切平板/切 no 设备强制关双面防 400）④预览图角标：正面红系 FileUp / 背面蓝系 FileDown + 第 N 张⑤jobSummary 加「双面」；rescan 透传 duplex；输出说明更新
+- 【验收】后端冒烟：设备 duplexCap 注入（flatbed no/adf yes）+ capabilities 端点（adf true/flatbed false）+ Platen+duplex 400 + Feeder duplex 4 页 completed + pageSides 正反交替 + 正/反页字节差异（8431 vs 9793）+ 场景 19 单跑 4.1s pass；全量回归 19/19 ×2（curl + 浏览器 UI）；agent-browser E2E：选 ADF → 切送稿器 → 双面开关启用（提示文案三分支验证）→ 提交 → 4 页完成 → 翻页角标（正面·第1张/背面·第2张）→ 摘要「送稿器 · 双面」→ 导出 PDF 4 页 24.7KB → 清理零残留；10 tab × [1280/393] 零溢出；双面开关触控（label htmlFor 扩大热区）；VLM 评审主要建议与项目 emerald 主色规范冲突已甄别弃用（选中环=主题色为既有设计）；lint 0 error；版本 0.4.0 → 0.4.1（前后端）
+- 【文档】USAGE.md：扫描流程第 2/4 步双面说明 + 如实声明新增双面条目（ScannerCapabilities 探测/Duplex XML/400 语义）+ vscan 说明更新；README：v0.4.1 badge + 19/19 + 特性 bullet 双面 + Roadmap 12 补双面 ✔
+- git 提交推送
+
+Stage Summary:
+- 交付：eSCL Duplex 双面扫描全链路（协议 <scan:Duplex> 编码 + ScannerCapabilities 能力三态探测 + vscan 4 页正反交替渲染 + 语义校验双层拦截 + 前端开关/角标/徽章 + 场景 19）——扫描侧与真实 ADF 行为对齐，上轮留的「双面扫描留后续」TODO 完成
+- QA 修复：v0.4.0 引入的 restUrl 令牌泄露 + 移动端溢出回归（10 tab 唯一红点清除）
+- 设计要点：能力三态延伸到扫描轴（探测失败≠不支持）；页序与真实 ADF 一致（纸1正→纸1反→纸2正→纸2反）；正/反页双重视觉区分（色带 + 空心框）；双面 PDF 保持文档顺序合成
+- 项目状态：稳定（19/19、lint 0、零溢出、零 console error、E2E 全绿）
+- 已知风险/未验证：①真实 eSCL 扫描仪的 Duplex 行为（部分机型忽略该参数回单面页流——此时 pagesTotal 按实际取页收敛，pageSides 可能与实际不符，如实以取页为准）②ScannerCapabilities 解析仅取 Duplex 元素（真实设备报文更复杂，解析容错已按 unknown 兜底）③部分老款 eSCL 固件 ScannerCapabilities 端点 404 → 未知态允许尝试提交（符合能力三态原则）
+- 下一阶段优先建议：①扫描亮度/对比度参数（eSCL Brightness/Contrast 透传 + vscan 渲染模拟）②P4 Brother PJL over 9100 试点（首个 Vendor Adapter）③Android/iOS 原生化（NsdManager + 双面开关 UI + PDF 存相册）④扫描区域裁剪（eSCL ScanRegion 自定义）⑤真实硬件验证

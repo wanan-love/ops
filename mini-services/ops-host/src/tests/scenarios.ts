@@ -44,6 +44,7 @@ export type ScenarioId =
   | 'ipps-full-flow'
   | 'escl-full-flow'
   | 'scan-pdf-export'
+  | 'escl-duplex'
   | 'console-auth'
 
 interface Scenario {
