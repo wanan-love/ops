@@ -378,3 +378,27 @@ Stage Summary:
 - 本地验证完备；真机 ipps（各品牌自签/企业 CA 证书）待硬件验证
 - 项目状态：稳定（15/15、lint 0、零溢出、CI 绿）
 - 下一阶段建议：①P3 eSCL 扫描后端（_uscan._tcp，对齐 sane-airscan）②P4 Brother PJL over 9100 试点（首个 Vendor Adapter）③Host 控制台鉴权（访问口令）④Android/iOS 原生化（NsdManager 发现）⑤真实硬件验证（CUPS/Windows 宿主 + ipps 真机证书）
+
+---
+Task ID: 7（cron 迭代轮）
+Agent: main-agent
+Task: P3 eSCL 扫描全链路 + mDNS 确定性修复（v0.3.2）
+
+Work Log:
+- 开工核查：v0.3.1 五端口全监听、git 干净、lint 0 → 稳定；QA 深挖发现 mDNS 真实 bug
+- 【QA 发现并修复 mDNS 非确定性 bug】发现结果 service 标签错乱（ipps 实例被标 _pdl-datastream）：根因是 answerQuery 对任意 _ipp/_ipps/_pdl 查询都回全部实例（PTR name=查询名）+ aggregate 用 record.name 作 service（被包序覆盖）→ ipps 实例可能被误判 ipp://（明文连 TLS 端口失败）。修复：answerQuery 按 inst.ptrName 严格匹配（_pdl 查询不回 _ipp/_ipps 实例）+ aggregate scheme/service 按实例名确定性推导；两次扫描逐字节一致（8 条：4 ipp + 4 ipps 全正确）
+- 【P3 eSCL 扫描后端】新增 src/backends/escl/client.ts（HTTP+XML eSCL 客户端：ScannerStatus/ScanJobs 创建/NextDocument 取页/Cancel，https TOFU）+ src/vscan/server.ts（Virtual eSCL Scanner :3065，vscan-flatbed/vscan-adf 两档案，纯手写 PNG：zlib deflateSync + CRC32 查表，IHDR/IDAT/IEND，渐变色带+文字行条纹+对齐块+页码，start 自检魔数与 IHDR）+ src/core/scan.ts（ScanManager：设备 vscan/mdns/manual + 任务后台取页循环 409 重试/404 结束/30s 超时 + 落盘 scan-jobs/ + 恢复）+ 10 条 /api/scan/* 路由 + scan:update WS 事件 + HostInfo.vscanPort
+- 【mDNS _uscan 集成】QUERIED_SERVICES/通告/聚合加 _uscan._tcp.local；aggregate 打印列表过滤 _uscan 实例（扫描仪不混入打印 URI）；新增 scanUscan() 专扫；answerQuery 响应补 A 记录（修复扫描仪 ip 回退 127.0.0.1 与 vscan 撞车被去重）
+- 【自测场景 16】escl-full-flow：设备列表断言 → Platen 单页 PNG（魔数+IHDR 850x1100 字节校验）→ ADF Feeder 多页（2 页灰度）→ 取消容错 → RunManifest 扩展 scanJobIds + autoCleanup 同步清理内存与磁盘；16/16 全过
+- 【前端扫描 tab】types/client（9 方法 + scanImageUrl 网关/直连双模式）/store（scanDevices/scanJobs + scan:update upsert + 7 动作）/scan-view.tsx 669 行（设备卡来源徽章 violet 虚拟/blue 发现/secondary 手动、参数表单 dpi/色彩/输源、任务卡 indeterminate 进度条+棋盘背景 PNG 预览+多页 Chevron 翻页+blob 下载+重扫+取消）/ops-app 插入扫描 tab（打印队列后）
+- 【QA 修复前端合并 bug】scanMdns 替换掉 vscan 设备 → 改合并（现有全保留 + mdns baseUrl 去重追加）；实测 2 虚拟+2 发现共存且幂等
+- 【文档】USAGE.md 新增扫描（eSCL）章节（流程/手动添加/排查/能力如实声明）；VENDOR_PROTOCOLS.md P3 ✅；README 特性 bullet + 16 场景 + :3065 + Roadmap
+- 【版本】0.3.1 → 0.3.2（前后端 + package.json）
+- 【最终验收】10 tab × [393/1280] 0 溢出 0 错误；扫描 E2E（开始扫描→已完成→图像真实加载→清理）；lint 0 error；git 提交推送
+
+Stage Summary:
+- 交付：eSCL 扫描全链路（客户端 + Virtual eSCL Scanner :3065 + 设备发现 + 前端扫描 tab + 实时任务 + 自测场景 16）+ mDNS 两处确定性修复 + 3.0 系列第 3 个协议通道（打印 ipp/ipps → 扫描 eSCL）
+- 开发中暴露并修复 4 个实现缺陷（bus 引用错/A 记录缺失/uri 去重吞实例/内存未清）
+- 真实扫描仪（各品牌 eSCL 差异：双面/DFE/PDF 直出）待硬件验证；PDF 合成、双面扫描留后续
+- 项目状态：稳定（16/16、lint 0、零溢出）
+- 下一阶段建议：①扫描 PDF 合成（多页 PNG → application/pdf 输出）②Host 控制台鉴权（访问口令 + API token）③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Android/iOS 原生化（NsdManager + 扫描 UI）⑤真实硬件验证
