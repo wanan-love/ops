@@ -1,7 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <!--
-    OpenPrintShare Windows MSI 安装器（WiX v4）
-    CI 构建：dotnet tool install --global wix && wix build -arch x64 -d Version=x.y.z -d ExePath=path/to/exe openprintshare.wxs
+    OpenPrintShare Windows MSI 安装器（WiX v4/v6）
+    CI 构建：wix build -arch x64 -d Version=x.y.z -d ExePath=path/to/exe openprintshare.wxs
   -->
   <Package
     Name="OpenPrintShare"
