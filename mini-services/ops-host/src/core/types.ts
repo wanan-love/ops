@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.3.0'
+export const OPS_VERSION = '0.3.1'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -337,4 +337,6 @@ export interface HostInfo {
   restPort: number
   wsPort: number
   dataDir: string
+  /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
+  vippTlsPort?: number | null
 }

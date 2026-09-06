@@ -219,7 +219,7 @@ export function buildRouter(): Router {
 
   router.get('/api/vipp/printers', (ctx, _req, res) => {
     if (!ctx.vipp) return sendError(res, 409, 'Virtual IPP Server 未启用（OPS_VIPP_ENABLED=0）')
-    sendJson(res, 200, { port: ctx.vipp.port, dataDir: ctx.vipp.dataDir, printers: ctx.vipp.list() })
+    sendJson(res, 200, { port: ctx.vipp.port, tlsPort: ctx.vipp.tlsActivePort, dataDir: ctx.vipp.dataDir, printers: ctx.vipp.list() })
   })
 
   router.post('/api/vipp/printers/:id/condition', async (ctx, _req, res, params, _query, body) => {

@@ -2,6 +2,7 @@
 
 import { Github, HardDrive } from 'lucide-react'
 import { useOpsStore } from './store'
+import { OPS_VERSION } from '@/lib/ops/types'
 
 export function Footer() {
   const hostInfo = useOpsStore((s) => s.hostInfo)
@@ -12,7 +13,7 @@ export function Footer() {
     <footer className="mt-auto border-t bg-muted/30">
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-medium">OpenPrintShare v{hostInfo?.version ?? '0.1.0'}</span>
+          <span className="font-medium">OpenPrintShare v{hostInfo?.version ?? OPS_VERSION}</span>
           <span className="hidden items-center gap-1 sm:flex" title={hostInfo?.dataDir}>
             <HardDrive className="size-3" aria-hidden />
             {hostInfo?.backends?.length ? `后端：${hostInfo.backends.map((b) => b.toUpperCase()).join(' / ')}` : 'PrinterBackend 统一接口'}

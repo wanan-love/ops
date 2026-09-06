@@ -358,3 +358,23 @@ Stage Summary:
 - 本地验证完备；SNMP 状态/community 对真实设备的实际效果待硬件验证（预期企业机型收益最大：Ricoh/Kyocera/KM/Xerox 常关 IPP 只留 SNMP）
 - 项目当前状态：稳定（CI 全绿、14/14、零溢出、lint 0）
 - 下一阶段优先建议：①P2 ipps:// TLS（自签容忍 + TOFU）②P3 eSCL 扫描后端（_uscan._tcp 发现，对齐 sane-airscan）③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Host 控制台鉴权 ⑤Android/iOS 原生化（NsdManager）
+
+---
+Task ID: 6（cron 迭代轮）
+Agent: main-agent
+Task: P2 ipps:// TLS 全链路 + 自测自动清理 + 3 项 QA 修复（v0.3.1）
+
+Work Log:
+- 开工核查：服务 4 端口全监听（+3063 TLS 新增）、CI 全绿、lint 0、QA 基线 9 tab 零溢出 → 项目稳定，选上轮建议的 P2 ipps TLS 作为本轮重点
+- 【QA 发现 3 个真实 bug 并修复】①前端 OPS_VERSION 硬编码 0.1.0（header 显示 v0.1.0 而 host 0.3.0）→ header/footer 改用 hostInfo.version 兜底常量 ②自测数据污染：scope=admin 累积 38 台（35 台 vp-* 测试残留）——场景创建 test:true 打印机但从不清理，且 importFromBackend opts.test:true 会污染复用的种子打印机 → 新增 RunManifest（createdPrinterIds/importedRestores/jobIds）精确追踪，全部通过后自动清理（失败保留供排查）；存量清理 35 台/51 任务；15 场景通过后零残留（3 台种子、0 test、0 测试任务）复验 ③print-view Mock 打印机误示「耗材未知（未上报）」（Mock 耗材 SYSTEM 定义即真实）→ backend !== 'mock' 才显示
+- 【P2 ipps:// TLS 后端 10 文件】①ipp/client.ts：ippUriToHttpUrl 支持 ipps→https（缺省端口 631）、传输层 fetch → node:http/https（https rejectUnauthorized:false TOFU 自签容忍）②vipp/server.ts：tlsPort 选项 + startTls()（openssl 自签开发证书，失败降级不影响明文 :3061）+ tlsActivePort getter，TLS 复用同一 handle() ③host.ts：OPS_VIPP_TLS/OPS_VIPP_TLS_PORT（默认开 :3063）④mdns.ts：查询/通告 _ipps._tcp.local（双服务 _ipp+_ipps），aggregate 按服务类型生成 ipps:// URI ⑤selftest.ts：ScenarioApi 新增 vippTlsAvailable()/importFromUri()（直接 URI 导入不污染 ipp-uris.json）⑥场景 15 ipps-full-flow：ipps://127.0.0.1:3063 导入 → TLS 能力探测 → Print-Job over TLS → completed ⑦/api/vipp/printers + HostInfo 暴露 tlsPort/vippTlsPort ⑧printers.ts 提取 findExisting()（导入去重 + 自测快照复用）
+- 【前端 + 文档】types/client 对齐 tlsPort；backends-view：VIPP 双 URI（ipps + Lock 图标）+ ipps/TLS :3063 徽章 + add-uri ipps 提示；discovery-view ipps:// TLS 徽章（shrink-0 防溢出）；USAGE.md 新增「ipps://（TLS 加密打印）」章节；VENDOR_PROTOCOLS.md P2 ✅；README 特性 bullet + 15 场景 + Roadmap
+- 【版本】OPS_VERSION 0.3.0 → 0.3.1（前后端 + package.json）；host 重启后 header/系统信息一致
+- 【最终验收】lint 0 error 0 warning；agent-browser 经 :81：9 tab × [393/1280] 全 0 横向溢出 0 console error；打印后端 tab ipps://localhost:3063 + TLS 徽章断言通过；示例文档打印 E2E 完成（队列出现已完成新任务）；自测 15/15 全 pass（ipps-full-flow 3.3s）+ 零残留复验
+- git 提交推送 main
+
+Stage Summary:
+- 交付：ipps:// TLS 全链路（客户端 TOFU + VIPP :3063 测试端点 + mDNS ipps 发现 + 自测场景 15）+ 自测自动清理机制 + 3 项 QA 修复 + v0.3.1
+- 本地验证完备；真机 ipps（各品牌自签/企业 CA 证书）待硬件验证
+- 项目状态：稳定（15/15、lint 0、零溢出、CI 绿）
+- 下一阶段建议：①P3 eSCL 扫描后端（_uscan._tcp，对齐 sane-airscan）②P4 Brother PJL over 9100 试点（首个 Vendor Adapter）③Host 控制台鉴权（访问口令）④Android/iOS 原生化（NsdManager 发现）⑤真实硬件验证（CUPS/Windows 宿主 + ipps 真机证书）

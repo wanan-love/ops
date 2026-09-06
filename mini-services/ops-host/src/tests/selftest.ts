@@ -4,6 +4,23 @@ import { makeSamplePdf, exactPageCount } from '../pdf/sample'
 import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
 
 /**
+ * 自测运行清单 —— 精确追踪本次运行创建/导入/提交的资源，供「全部通过后自动清理」：
+ *  - createdPrinterIds：本运行新建的虚拟/导入打印机（成功后删除）
+ *  - importedRestores：复用的既有导入条目（成功后恢复导入前的 test/shared 状态，避免把种子打印机永久标记为测试数据）
+ *  - jobIds：本运行提交的任务（成功后删除）
+ * 失败时全部保留供排查，可用调试页「清理测试数据」一键移除。
+ */
+export interface RunManifest {
+  createdPrinterIds: Set<string>
+  importedRestores: Map<string, { test: boolean; shared: boolean }>
+  jobIds: Set<string>
+}
+
+export function newRunManifest(): RunManifest {
+  return { createdPrinterIds: new Set(), importedRestores: new Map(), jobIds: new Set() }
+}
+
+/**
  * SelfTestRunner — 内置自动化测试运行器（产品化能力，非外部测试代码）。
  * 在没有真实打印机的环境下验证 Virtual Printer 全部行为，
  * 结果落盘 test-runs/{runId}.json，并通过 WS 'test:progress' 实时推送。
@@ -45,6 +62,7 @@ export class SelfTestRunner {
     this.emitProgress(run)
 
     void (async () => {
+      const manifest = newRunManifest()
       const results = await runScenarios(this.ctx, selected, (partial) => {
         run.results = partial
         run.passed = partial.filter((r) => r.status === 'pass').length
@@ -52,12 +70,20 @@ export class SelfTestRunner {
         // 运行中也落盘（供 /api/tests/runs/:id 轮询）
         void this.ctx.storage.writeJson(`test-runs/${run.runId}.json`, run)
         this.emitProgress(run)
-      })
+      }, manifest)
       run.results = results
       run.passed = results.filter((r) => r.status === 'pass').length
       run.failed = results.filter((r) => r.status === 'fail' || r.status === 'error').length
       run.status = 'done'
       run.finishedAt = new Date().toISOString()
+      if (run.failed === 0) {
+        await this.autoCleanup(run, manifest)
+      } else {
+        this.ctx.log.test(
+          run,
+          `存在失败/错误场景，测试数据保留供排查（${manifest.createdPrinterIds.size} 台打印机 / ${manifest.jobIds.size} 个任务，可在调试页一键清理）`,
+        )
+      }
       await this.ctx.storage.writeJson(`test-runs/${run.runId}.json`, run)
       this.ctx.log.test(run, `自动化测试结束：${run.passed}/${run.total} 通过（run ${run.runId}）`)
       this.emitProgress(run)
@@ -69,6 +95,42 @@ export class SelfTestRunner {
 
   private emitProgress(run: TestRun): void {
     this.ctx.bus.emit('test:progress', { run: { ...run, results: run.results.map((r) => ({ ...r })) } })
+  }
+
+  /** 全部通过 → 精确清理本次运行创建的资源（不动其它数据/测试运行历史） */
+  private async autoCleanup(run: TestRun, manifest: RunManifest): Promise<void> {
+    const ctx = this.ctx
+    let removedPrinters = 0
+    for (const id of manifest.createdPrinterIds) {
+      if (ctx.printers.get(id)) {
+        ctx.engine.onPrinterRemoved(id)
+        ctx.printers.remove(id)
+        removedPrinters++
+      }
+    }
+    let restored = 0
+    let touched = false
+    for (const [id, snap] of manifest.importedRestores) {
+      const printer = ctx.printers.get(id)
+      if (printer && (printer.test !== snap.test || printer.shared !== snap.shared)) {
+        printer.test = snap.test
+        printer.shared = snap.shared
+        printer.updatedAt = new Date().toISOString()
+        restored++
+        touched = true
+        ctx.bus.emit('printer:update', { printer })
+      }
+    }
+    const jobIds = manifest.jobIds
+    const removedJobs = await ctx.jobs.removeJobsWhere((j) => jobIds.has(j.id))
+    if (touched || removedPrinters > 0) await ctx.printers.persistNow()
+    if (removedPrinters > 0 || restored > 0 || removedJobs > 0) {
+      ctx.bus.emit('snapshot', {})
+      ctx.log.test(
+        run,
+        `全部通过，已自动清理本次运行的测试数据：删除 ${removedPrinters} 台临时打印机 / ${removedJobs} 个任务 / 恢复 ${restored} 台导入打印机原状态（测试运行历史保留）`,
+      )
+    }
   }
 }
 
@@ -99,6 +161,10 @@ export interface ScenarioApi {
   mdnsAvailable(): boolean
   /** Virtual IPP Server 是否启用 */
   vippAvailable(): boolean
+  /** Virtual IPP TLS（ipps）是否实际监听（证书降级/OPS_VIPP_TLS=0 时 false） */
+  vippTlsAvailable(): boolean
+  /** 直接按 URI 导入后端打印机（不经 URI 注册表，避免测试污染 ipp-uris.json） */
+  importFromUri(backend: 'ipp', uri: string, opts?: { displayName?: string }): Promise<Printer>
   /** 读取 vipp 打印机内部任务状态（验证 IPP Cancel-Job 等服务端效果） */
   vippJobState(printerId: string, backendJobId: string): string | null
 }
@@ -116,22 +182,24 @@ export class ScenarioSkipped extends Error {
   }
 }
 
-export function makeApi(ctx: HostContext, steps: TestStep[]): ScenarioApi {
+export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManifest): ScenarioApi {
   return {
     createPrinter(label, caps): Printer {
-      return ctx.printers.create({
+      const printer = ctx.printers.create({
         name: `TEST ${label}`,
-        description: 'Self-Test 场景专用虚拟打印机（可一键清理）',
+        description: 'Self-Test 场景专用虚拟打印机（全部通过后自动清理）',
         location: 'SelfTest',
         shared: false,
         test: true,
         capabilities: { ppm: 60, color: true, duplex: 'both', paperSizes: ['A4', 'Letter'], ...caps },
       })
+      manifest?.createdPrinterIds.add(printer.id)
+      return printer
     },
     async submit(printer, pages = 2, copies = 1) {
       const pdf = await makeSamplePdf(pages, `SelfTest 文档（${pages} 页 × ${copies} 份）`)
       const pageCount = (await exactPageCount(pdf)) ?? pages
-      return ctx.jobs.submit({
+      const job = await ctx.jobs.submit({
         printer,
         pdf,
         fileName: `selftest-${pages}p.pdf`,
@@ -140,6 +208,8 @@ export function makeApi(ctx: HostContext, steps: TestStep[]): ScenarioApi {
         test: true,
         pageCount,
       })
+      manifest?.jobIds.add(job.id)
+      return job
     },
     getJob(jobId) {
       const job = ctx.jobs.get(jobId)
@@ -209,7 +279,15 @@ export function makeApi(ctx: HostContext, steps: TestStep[]): ScenarioApi {
       if (!available) throw new ScenarioSkipped(`后端 ${kind} 当前不可用：${backend.availabilityNote}`)
       const ref = await backend.getPrinter(key)
       if (!ref) throw new ScenarioFailure(`后端 ${kind} 中找不到打印机：${key}`)
-      return ctx.printers.importFromBackend(backend, ref, { test: true, shared: opts?.shared ?? false, displayName: opts?.displayName })
+      // 导入前快照：复用既有条目时记录原 test/shared，供全部通过后恢复（避免把种子/用户打印机永久标记为测试数据）
+      const existing = ctx.printers.findExisting(kind, ref)
+      const snap = existing ? { test: existing.test, shared: existing.shared } : null
+      const printer = await ctx.printers.importFromBackend(backend, ref, { test: true, shared: opts?.shared ?? false, displayName: opts?.displayName })
+      if (manifest) {
+        if (snap) manifest.importedRestores.set(printer.id, snap)
+        else manifest.createdPrinterIds.add(printer.id)
+      }
+      return printer
     },
     mdnsScan() {
       return ctx.mdns.scan()
@@ -219,6 +297,24 @@ export function makeApi(ctx: HostContext, steps: TestStep[]): ScenarioApi {
     },
     vippAvailable() {
       return ctx.vipp !== null
+    },
+    vippTlsAvailable() {
+      return ctx.vipp !== null && ctx.vipp.tlsActivePort !== null
+    },
+    async importFromUri(kind, uri, opts) {
+      const backend = ctx.backends.get(kind)
+      if (!backend) throw new ScenarioSkipped(`后端 ${kind} 未装配`)
+      const available = await backend.available()
+      if (!available) throw new ScenarioSkipped(`后端 ${kind} 当前不可用：${backend.availabilityNote}`)
+      const ref = { key: uri, displayName: opts?.displayName ?? uri, description: `自测直接导入：${uri}`, uri }
+      const existing = ctx.printers.findExisting(kind, ref)
+      const snap = existing ? { test: existing.test, shared: existing.shared } : null
+      const printer = await ctx.printers.importFromBackend(backend, ref, { test: true, shared: false })
+      if (manifest) {
+        if (snap) manifest.importedRestores.set(printer.id, snap)
+        else manifest.createdPrinterIds.add(printer.id)
+      }
+      return printer
     },
     vippJobState(printerId, backendJobId) {
       if (!ctx.vipp) return null

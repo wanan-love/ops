@@ -219,7 +219,7 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
                 {effectivePrinter.backend !== 'mock' ? `${effectivePrinter.backend.toUpperCase()} 后端 · ` : ''}
                 {effectivePrinter.capabilities.color ? '支持彩色' : '仅黑白'} · {effectivePrinter.capabilities.paperSizes.join('/')} ·{' '}
                 {effectivePrinter.speedOverridePpm ?? effectivePrinter.capabilities.ppm} ppm
-                {effectivePrinter.capabilityReport?.consumables.state === 'unknown' ? ' · 耗材未知（未上报）' : ''}
+                {effectivePrinter.backend !== 'mock' && effectivePrinter.capabilityReport?.consumables.state === 'unknown' ? ' · 耗材未知（未上报）' : ''}
               </p>
             )}
           </div>

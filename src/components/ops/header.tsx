@@ -22,7 +22,7 @@ export function Header() {
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold leading-tight">OpenPrintShare</h1>
             <p className="truncate text-xs text-muted-foreground">
-              跨平台局域网共享打印机 · OPS/{hostInfo?.apiVersion ?? 1} · v{OPS_VERSION}
+              跨平台局域网共享打印机 · OPS/{hostInfo?.apiVersion ?? 1} · v{hostInfo?.version ?? OPS_VERSION}
             </p>
           </div>
         </div>

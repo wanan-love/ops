@@ -17,7 +17,7 @@ import { ippScenarios } from './scenarios-ipp'
  * 10. host-restart      Host 重启后的任务状态恢复（从磁盘恢复并续打）
  *
  * 阶段 2 追加（scenarios-ipp.ts，虚拟打印机场景不改动）：
- * 11. ipp-full-flow / 12. ipp-capability-unknown / 13. ipp-cancel / 14. mdns-local-discovery
+ * 11. ipp-full-flow / 12. ipp-capability-unknown / 13. ipp-cancel / 14. mdns-local-discovery / 15. ipps-full-flow
  */
 export type ScenarioId =
   | 'normal-print'
@@ -34,6 +34,7 @@ export type ScenarioId =
   | 'ipp-capability-unknown'
   | 'ipp-cancel'
   | 'mdns-local-discovery'
+  | 'ipps-full-flow'
 
 interface Scenario {
   id: ScenarioId
@@ -256,6 +257,7 @@ export async function runScenarios(
   ctx: HostContext,
   ids: ScenarioId[],
   onProgress: (results: ScenarioResult[]) => void,
+  manifest?: import('./selftest').RunManifest,
 ): Promise<ScenarioResult[]> {
   const results: ScenarioResult[] = []
   const all: Scenario[] = [...scenarios, ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) }))]
@@ -263,7 +265,7 @@ export async function runScenarios(
     if (!ids.includes(scenario.id)) continue
     const startedAt = Date.now()
     const steps: TestStep[] = []
-    const api = makeApi(ctx, steps)
+    const api = makeApi(ctx, steps, manifest)
     let result: ScenarioResult
     try {
       await scenario.run(api)

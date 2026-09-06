@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Printer, PrinterCapabilities, PrinterStatus, PrintOptions } from './types'
+import type { Printer, PrinterCapabilities, PrinterStatus, PrintOptions, BackendKind } from './types'
 import type { CapabilityReport, CapabilitySource } from './types'
 import type { BackendPrinterRef, PrinterBackend } from '../backends/index'
 import { mergeReports, resolveEffectiveCaps } from '../backends/merge'
@@ -203,6 +203,23 @@ export class PrinterRegistry {
   // ------------------------------------------------------- 真实后端导入与能力刷新
 
   /**
+   * 按后端引用查找既有条目：先 key 推导 id，再 URI 归一化去重（同一设备可经多路径导入）。
+   * 供 importFromBackend 复用；自测自动清理也用它做导入前快照。
+   */
+  findExisting(kind: BackendKind, ref: BackendPrinterRef): Printer | undefined {
+    const id = `${kind}-${sanitizeKey(ref.key)}`
+    const byId = this.printers.get(id)
+    if (byId) return byId
+    if (ref.uri) {
+      const target = normalizePrinterUri(ref.uri)
+      return this.listAll().find(
+        (p) => p.backend === kind && p.backendUri && normalizePrinterUri(p.backendUri) === target,
+      )
+    }
+    return undefined
+  }
+
+  /**
    * 从后端导入打印机（幂等去重）：
    *  1. 同 backend+backendKey → 复用既有条目（刷新能力）
    *  2. 同 backend 且 backendUri 归一化相同 → 视为同一台物理设备，复用既有条目
@@ -212,7 +229,6 @@ export class PrinterRegistry {
    */
   async importFromBackend(backend: PrinterBackend, ref: BackendPrinterRef, opts?: ImportFromBackendOptions): Promise<Printer> {
     const kind = backend.kind
-    const id = `${kind}-${sanitizeKey(ref.key)}`
     // 真实能力探测（失败也不阻塞导入 —— 全 unknown 报告 + 失败 probe）
     const report = await backend.getCapabilities(ref.key)
     const caps = resolveEffectiveCaps(report)
@@ -223,20 +239,10 @@ export class PrinterRegistry {
       copies: 1,
       quality: 'normal',
     }
-    let printer = this.printers.get(id)
-    let deduped = false
-    if (!printer && ref.uri) {
-      // URI 归一化去重：同一台设备可能经不同路径导入（后端列表 key / mDNS URI / 手动 URI）
-      const target = normalizePrinterUri(ref.uri)
-      const existing = this.listAll().find(
-        (p) => p.backend === kind && p.backendUri && normalizePrinterUri(p.backendUri) === target,
-      )
-      if (existing) {
-        printer = existing
-        deduped = true
-      }
-    }
+    let printer = this.findExisting(kind, ref)
+    let deduped = printer !== undefined && printer.id !== `${kind}-${sanitizeKey(ref.key)}`
     if (!printer) {
+      const id = `${kind}-${sanitizeKey(ref.key)}`
       printer = {
         id,
         name: opts?.displayName ?? ref.displayName,

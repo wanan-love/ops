@@ -1,4 +1,6 @@
 import type { PrintOptions } from '../../core/types'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import {
   attr,
   encodeIppMessage,
@@ -27,12 +29,14 @@ import type { IppGroup } from './protocol'
  *
  * 传输：POST http(s)://host:port/path，content-type: application/ipp。
  *  - ipp:// → http://（端口缺省 631）
- *  - ipps:// / https:// → 暂不支持 TLS（明确报错，能力归为 UNKNOWN 而非猜测）
+ *  - ipps:// → https://（端口缺省 631；自签名容忍 —— 局域网打印机几乎全部使用自签证书，
+ *    与 CUPS driverless 生态一致采用 TOFU 策略：不校验 CA，仅要求加密通道）
+ *  - http(s):// 原样透传
  */
 
 export class IppUnsupportedSchemeError extends Error {
   constructor(uri: string) {
-    super(`IPP URI 方案暂不支持（TLS 待后续实现）：${uri}`)
+    super(`IPP URI 方案无效（仅支持 ipp:// ipps:// http:// https://）：${uri}`)
   }
 }
 
@@ -74,19 +78,51 @@ function nextRequestId(): number {
   return requestIdCounter
 }
 
-/** ipp:// / ipps:// / http(s):// → HTTP URL（ipps 暂不支持） */
+/** 原生 HTTP/HTTPS POST（ipps 自签名容忍：https 时 rejectUnauthorized=false，TOFU 策略） */
+function httpPost(url: string, body: Buffer, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number; data: Buffer }> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch (err) {
+      reject(err)
+      return
+    }
+    const send = parsed.protocol === 'https:' ? httpsRequest : httpRequest
+    const req = send(
+      parsed,
+      {
+        method: 'POST',
+        headers,
+        // ipps:// 自签名容忍（局域网打印机普遍自签，与 CUPS driverless 行为一致）
+        ...(parsed.protocol === 'https:' ? { rejectUnauthorized: false } : {}),
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (c: Buffer) => chunks.push(c))
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, data: Buffer.concat(chunks) }))
+        res.on('error', reject)
+      },
+    )
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`HTTP 请求超时（${timeoutMs}ms）`)))
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+/** ipp:// / ipps:// / http(s):// → HTTP URL（ipps → https；端口缺省补 631） */
 export function ippUriToHttpUrl(uri: string): string {
-  if (uri.startsWith('ipps://') || uri.startsWith('https://')) throw new IppUnsupportedSchemeError(uri)
-  if (uri.startsWith('ipp://')) {
-    const rest = uri.slice('ipp://'.length)
+  const convert = (scheme: string, defaultPort: string, rest: string): string => {
     const slash = rest.indexOf('/')
     const hostPart = slash >= 0 ? rest.slice(0, slash) : rest
     const pathPart = slash >= 0 ? rest.slice(slash) : '/'
     const hasPort = /:\d+$/.test(hostPart)
-    const host = hasPort ? hostPart : `${hostPart}:631`
-    return `http://${host}${pathPart}`
+    const host = hasPort ? hostPart : `${hostPart}${defaultPort}`
+    return `${scheme}://${host}${pathPart}`
   }
-  if (uri.startsWith('http://')) return uri
+  if (uri.startsWith('ipp://')) return convert('http', ':631', uri.slice('ipp://'.length))
+  if (uri.startsWith('ipps://')) return convert('https', ':631', uri.slice('ipps://'.length))
+  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri
   throw new IppUnsupportedSchemeError(uri)
 }
 
@@ -102,21 +138,17 @@ export class IppClient {
   /** 发送 IPP 消息并解码响应（状态码 ≥0x0400 抛 IppStatusError） */
   private async request(uri: string, input: { code: number; groups: Parameters<typeof encodeIppMessage>[0]['groups']; data?: Uint8Array }): Promise<IppMessage> {
     const body = encodeIppMessage({ code: input.code, requestId: nextRequestId(), groups: input.groups, data: input.data })
-    let response: Response
+    let response: { status: number; data: Buffer }
     try {
-      response = await fetch(ippUriToHttpUrl(uri), {
-        method: 'POST',
-        headers: { 'content-type': 'application/ipp' },
-        body: Buffer.from(body),
-        signal: AbortSignal.timeout(this.timeoutMs),
-      })
+      response = await httpPost(ippUriToHttpUrl(uri), Buffer.from(body), { 'content-type': 'application/ipp' }, this.timeoutMs)
     } catch (err) {
       throw new IppTransportError(uri, err)
     }
-    if (!response.ok) {
-      throw new IppStatusError(response.status >= 400 && response.status < 600 ? (response.status * 0x100) & 0xffff : 0x0500, `HTTP ${response.status}`)
+    if (response.status < 200 || response.status >= 300) {
+      const status = response.status
+      throw new IppStatusError(status >= 400 && status < 600 ? (status * 0x100) & 0xffff : 0x0500, `HTTP ${status}`)
     }
-    const bytes = new Uint8Array(await response.arrayBuffer())
+    const bytes = new Uint8Array(response.data)
     const msg = decodeIppMessage(bytes)
     if (!isSuccessCode(msg.code)) {
       const message = attrStr(findAttr(msg, 'status-message'))

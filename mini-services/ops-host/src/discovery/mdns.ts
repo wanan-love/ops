@@ -28,7 +28,8 @@ const TYPE_SRV = 33
 const TYPE_TXT = 16
 
 const IPP_SERVICE = '_ipp._tcp.local'
-const QUERIED_SERVICES = ['_ipp._tcp.local', '_universal._sub._ipp._tcp.local', '_pdl-datastream._tcp.local']
+const IPPS_SERVICE = '_ipps._tcp.local'
+const QUERIED_SERVICES = ['_ipp._tcp.local', '_ipps._tcp.local', '_universal._sub._ipp._tcp.local', '_pdl-datastream._tcp.local']
 
 // ---------------------------------------------------------------- DNS 编码
 
@@ -413,24 +414,33 @@ export class MdnsService {
   private serviceInstances(): ServiceInstance[] {
     const vipp = this.opts.vipp
     if (!vipp) return []
+    const tlsPort = vipp.tlsActivePort
     const out: ServiceInstance[] = []
     for (const snapshot of vipp.list()) {
       const label = snapshot.profile
-      const instanceName = `OPS Virtual IPP ${label}._ipp._tcp.local`
+      const baseTxt = {
+        txtvers: '1',
+        rp: `printers/${snapshot.id}`,
+        ty: 'OpenPrintShare Virtual IPP',
+        pdl: 'application/pdf',
+        qtotal: '1',
+      }
       out.push({
-        instanceName,
+        instanceName: `OPS Virtual IPP ${label}._ipp._tcp.local`,
         ptrName: IPP_SERVICE,
         host: this.hostname,
         port: vipp.port,
-        txt: {
-          txtvers: '1',
-          rp: `printers/${snapshot.id}`,
-          ty: 'OpenPrintShare Virtual IPP',
-          pdl: 'application/pdf',
-          note: 'OPS Virtual IPP Server',
-          qtotal: '1',
-        },
+        txt: { ...baseTxt, note: 'OPS Virtual IPP Server' },
       })
+      if (tlsPort !== null) {
+        out.push({
+          instanceName: `OPS Virtual IPP ${label}._ipps._tcp.local`,
+          ptrName: IPPS_SERVICE,
+          host: this.hostname,
+          port: tlsPort,
+          txt: { ...baseTxt, note: 'OPS Virtual IPP Server (ipps/TLS)' },
+        })
+      }
     }
     return out
   }
@@ -494,9 +504,16 @@ export class MdnsService {
       const lower = q.name.toLowerCase()
       if (q.type === TYPE_PTR || q.type === 255) {
         // PTR 查询：_ipp._tcp.local / _universal._sub._ipp._tcp.local / _pdl-datastream._tcp.local
-        if (lower.endsWith('_ipp._tcp.local') || lower.endsWith('_pdl-datastream._tcp.local')) {
+        if (lower.endsWith('_ipp._tcp.local') || lower.endsWith('_ipps._tcp.local') || lower.endsWith('_pdl-datastream._tcp.local')) {
           for (const inst of instances) {
-            if (lower.startsWith('_universal._sub._ipp') || lower === IPP_SERVICE || lower.endsWith('_ipp._tcp.local') || lower.endsWith('_pdl-datastream._tcp.local')) {
+            if (
+              lower.startsWith('_universal._sub._ipp') ||
+              lower === IPP_SERVICE ||
+              lower === IPPS_SERVICE ||
+              lower.endsWith('_ipp._tcp.local') ||
+              lower.endsWith('_ipps._tcp.local') ||
+              lower.endsWith('_pdl-datastream._tcp.local')
+            ) {
               records.push({ name: q.name, type: TYPE_PTR, class: 0x8001, ttl: 4500, rdata: encodeName(inst.instanceName) })
               records.push({ name: inst.instanceName, type: TYPE_SRV, class: 0x8001, ttl: 120, rdata: srvRdata(inst.port, inst.host) })
               records.push({ name: inst.instanceName, type: TYPE_TXT, class: 0x8001, ttl: 120, rdata: txtRdata(inst.txt) })
@@ -540,7 +557,7 @@ function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
       try {
         if (record.type === TYPE_PTR) {
           const target = parsePtr(record.rdata)
-          if (target.endsWith('_ipp._tcp.local') || target.endsWith('_pdl-datastream._tcp.local') || target.includes('._sub._ipp._tcp.local')) {
+          if (target.endsWith('_ipp._tcp.local') || target.endsWith('_ipps._tcp.local') || target.endsWith('_pdl-datastream._tcp.local') || target.includes('._sub._ipp._tcp.local')) {
             ptrs.set(target, record.name)
           }
         } else if (record.type === TYPE_SRV) {
@@ -569,7 +586,9 @@ function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
     // 实例名首标签 = 展示名
     const display = instanceName.split('.')[0] ?? instanceName
     const rp = txt['rp'] && txt['rp'] !== '' ? txt['rp'].replace(/^\/+/, '') : 'ipp/print'
-    const uri = `ipp://${ip}:${srv.port}/${rp}`
+    // _ipps._tcp 服务 → ipps:// URI（TLS 端点）
+    const scheme = serviceType.endsWith('_ipps._tcp.local') ? 'ipps' : 'ipp'
+    const uri = `${scheme}://${ip}:${srv.port}/${rp}`
     if (seen.has(uri)) continue
     seen.add(uri)
     out.push({

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { CircleCheck, CircleHelp, CircleX, Download, Link2, Network, Plus, RefreshCw, RadioTower, ScanSearch, ServerCog, Globe, FileDown } from 'lucide-react'
+import { CircleCheck, CircleHelp, CircleX, Download, Link2, Lock, Network, Plus, RefreshCw, RadioTower, ScanSearch, ServerCog, Globe, FileDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -99,7 +99,7 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
       return
     }
     if (!/^ipps?:\/\//.test(trimmed)) {
-      toast.error('URI 格式无效', { description: '应以 ipp:// 开头，例如 ipp://192.168.1.50/ipp/print' })
+      toast.error('URI 格式无效', { description: '应以 ipp:// 或 ipps:// 开头，例如 ipp://192.168.1.50/ipp/print' })
       return
     }
     setAdding(true)
@@ -184,6 +184,11 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                 :{vipp.port} · RFC 8010/8011
               </Badge>
             )}
+            {vipp?.tlsPort != null && (
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                TLS :{vipp.tlsPort}
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -208,10 +213,23 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-sm font-medium">{p.name}</span>
                           <Badge variant="secondary" className="text-[10px]">Profile: {p.profile}</Badge>
+                          {vipp.tlsPort != null && (
+                            <Badge variant="outline" className="text-[10px]" title="ipps://（IPP over TLS）加密通道可用">ipps</Badge>
+                          )}
                         </div>
-                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70" title={`ipp://localhost:${vipp.port}/printers/${p.id}`}>
-                          ipp://localhost:{vipp.port}/printers/{p.id}
-                        </p>
+                        <div className="mt-0.5 min-w-0 space-y-0.5">
+                          <p className="truncate font-mono text-[10px] text-muted-foreground/70" title={`ipp://localhost:${vipp.port}/printers/${p.id}`}>
+                            ipp://localhost:{vipp.port}/printers/{p.id}
+                          </p>
+                          {vipp.tlsPort != null && (
+                            <p className="flex min-w-0 items-center gap-1 font-mono text-[10px] text-muted-foreground/70">
+                              <Lock className="size-2.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                              <span className="truncate" title={`ipps://localhost:${vipp.tlsPort}/printers/${p.id}`}>
+                                ipps://localhost:{vipp.tlsPort}/printers/{p.id}
+                              </span>
+                            </p>
+                          )}
+                        </div>
                       </div>
                       <Button size="sm" variant={imported ? 'secondary' : 'default'} disabled={busy || imported} onClick={() => void importVipp(p.id)}>
                         {busy ? <RefreshCw className="size-3.5 animate-spin" aria-hidden /> : imported ? <CircleCheck className="size-3.5" aria-hidden /> : <Download className="size-3.5" aria-hidden />}
@@ -278,7 +296,14 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                           </Badge>
                         )}
                       </div>
-                      <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70" title={p.uri}>{p.uri}</p>
+                      <div className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-[10px] text-muted-foreground/70">
+                        <span className="truncate" title={p.uri}>{p.uri}</span>
+                        {p.uri.startsWith('ipps://') && (
+                          <Badge variant="outline" className="shrink-0 gap-0.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+                            <Lock className="size-2.5" aria-hidden /> TLS
+                          </Badge>
+                        )}
+                      </div>
                       {p.txt?.ty && <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">{p.txt.ty}{p.txt.note ? ` · ${p.txt.note}` : ''}</p>}
                     </div>
                     <Button size="sm" variant="outline" disabled={busyKeys.includes(p.uri)} onClick={() => void importFromMdns(p)}>
@@ -303,13 +328,13 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="ipp-uri">IPP URI（支持 ipps 的设备暂不支持 TLS，会明确报错）</Label>
+            <Label htmlFor="ipp-uri">IPP URI（ipp:// 或 ipps://）</Label>
             <div className="flex gap-2">
               <Input
                 id="ipp-uri"
                 value={uri}
                 onChange={(e) => setUri(e.target.value)}
-                placeholder="ipp://192.168.1.50/ipp/print"
+                placeholder="ipp://192.168.1.50/ipp/print 或 ipps://…"
                 className="min-w-0 flex-1 font-mono text-xs"
                 inputMode="url"
               />
@@ -318,6 +343,7 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                 添加并探测
               </Button>
             </div>
+            <p className="text-[11px] text-muted-foreground/60">ipps:// 走 TLS 加密（自签名证书自动容忍）</p>
           </div>
           <p className="text-[11px] leading-relaxed text-muted-foreground/70">
             添加后将通过 IPP Get-Printer-Attributes 真实探测能力：读取不到的属性标记为 UNKNOWN（≠不支持），打印仍可正常提交——由设备驱动最终裁决。

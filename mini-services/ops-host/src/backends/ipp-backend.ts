@@ -14,7 +14,7 @@ import { reportFromPrinterAttributes, reportFromError, statusFromPrinterAttribut
  *
  * 能力探测：真实调用 Get-Printer-Attributes → CapabilityReport：
  *  - 属性存在 → supported/unsupported；属性缺失 → unknown（读取不到 ≠ 不支持）
- *  - ipps://（TLS）暂不支持 → 报告全 unknown 并注明原因
+ *  - ipps://（TLS，自签名容忍 TOFU）→ https 传输
  *
  * 容错：getJobStatus 出错 → state 'unknown'（不抛异常炸队列）；getStatus 出错 → 抛给状态同步循环计数。
  */
@@ -36,7 +36,7 @@ interface AddedUriEntry {
 
 export class IPPPrinterBackend implements PrinterBackend {
   readonly kind: BackendKind = 'ipp'
-  readonly availabilityNote = 'IPP 直连后端（RFC 8010/8011 自研协议栈）：通过 Get-Printer-Attributes 探测能力、Print-Job 提交 PDF；本环境对接 Virtual IPP Server（:3061），也可直连局域网 IPP 打印机（ipps/TLS 暂不支持）'
+  readonly availabilityNote = 'IPP 直连后端（RFC 8010/8011 自研协议栈）：通过 Get-Printer-Attributes 探测能力、Print-Job 提交 PDF；支持 ipps://（TLS，自签名容忍 TOFU）；本环境对接 Virtual IPP Server（:3061 明文 / :3063 ipps），也可直连局域网 IPP 打印机'
 
   private readonly client: IppClient
   private readonly baseUri: string

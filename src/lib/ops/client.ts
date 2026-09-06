@@ -228,6 +228,8 @@ export interface VippPrinterInfo {
 
 export interface VippInfo {
   port: number
+  /** Virtual IPP TLS（ipps）端口（null = 未启用） */
+  tlsPort: number | null
   dataDir: string
   printers: VippPrinterInfo[]
 }

@@ -162,6 +162,8 @@ export interface HostInfo {
   restPort: number
   wsPort: number
   dataDir: string
+  /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
+  vippTlsPort?: number | null
 }
 
 export interface HostSettings {
@@ -288,7 +290,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.1.0'
+export const OPS_VERSION = '0.3.1'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',

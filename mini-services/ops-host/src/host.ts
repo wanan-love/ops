@@ -105,9 +105,11 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   const vippPort = Number(process.env.OPS_VIPP_PORT ?? 3061) || 3061
   const vippPpm = Number(process.env.OPS_VIPP_PPM ?? 60) || 60
   const vippDataDir = process.env.OPS_VIPP_DATA_DIR ?? resolve(dataDir, '..', 'virtual-ipp')
+  const vippTlsEnabled = process.env.OPS_VIPP_TLS !== '0'
+  const vippTlsPort = vippTlsEnabled ? Number(process.env.OPS_VIPP_TLS_PORT ?? 3063) || 3063 : null
   let vipp: VirtualIppServer | null = null
   if (vippEnabled) {
-    vipp = new VirtualIppServer({ port: vippPort, dataDir: vippDataDir, defaultPpm: vippPpm, bus })
+    vipp = new VirtualIppServer({ port: vippPort, dataDir: vippDataDir, defaultPpm: vippPpm, bus, tlsPort: vippTlsPort })
     try {
       await vipp.start()
     } catch (err) {
@@ -178,6 +180,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         restPort,
         wsPort,
         dataDir,
+        vippTlsPort: vipp?.tlsActivePort ?? null,
       }
     },
     restartSimulated(): void {

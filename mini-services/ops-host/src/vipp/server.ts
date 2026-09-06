@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer as createTlsServer, type Server as TlsServer } from 'node:https'
+import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -346,19 +348,29 @@ export interface VippServerOptions {
   /** 每台 vipp 打印机的标称速度（默认 60ppm 便于测试；OPS_VIPP_PPM 可调） */
   defaultPpm?: number
   bus?: EventBus
+  /** ipps://（TLS）监听端口；null/undefined = 不启用。证书缺失时自动用 openssl 生成自签证书（失败降级跳过） */
+  tlsPort?: number | null
 }
 
 export class VirtualIppServer {
   private readonly printers = new Map<string, VippPrinter>()
   private server: Server | null = null
+  private tlsServer: TlsServer | null = null
+  private tlsPortWanted: number | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private startedAt = 0
   readonly port: number
   readonly dataDir: string
 
+  /** 实际监听中的 TLS 端口（null = 未启用/降级）—— 供 mDNS 通告与 API 暴露 */
+  get tlsActivePort(): number | null {
+    return this.tlsServer ? this.tlsPortWanted : null
+  }
+
   constructor(private readonly opts: VippServerOptions) {
     this.port = opts.port
     this.dataDir = opts.dataDir
+    this.tlsPortWanted = opts.tlsPort ?? null
     const ppm = opts.defaultPpm ?? 60
     for (const profile of buildProfiles(ppm)) {
       this.printers.set(profile.id, new VippPrinter(profile, opts.dataDir, Date.now()))
@@ -389,14 +401,80 @@ export class VirtualIppServer {
       })
       this.server = server
     })
+    if (this.tlsPortWanted !== null) {
+      await this.startTls(this.tlsPortWanted)
+    }
     this.timer = setInterval(() => this.tick(), TICK_MS)
     console.log(`[vipp] Virtual IPP Server listening on :${this.port}（data=${this.dataDir}，${this.printers.size} 台虚拟 IPP 打印机）`)
+  }
+
+  /** ipps:// TLS 监听（自签开发证书；首次启动用 openssl 生成，环境无 openssl 或端口占用则降级跳过） */
+  private async startTls(port: number): Promise<void> {
+    const certDir = join(this.dataDir, 'tls')
+    const certPath = join(certDir, 'dev-cert.pem')
+    const keyPath = join(certDir, 'dev-key.pem')
+    try {
+      await fs.mkdir(certDir, { recursive: true })
+      const certExists = await fs.readFile(certPath).then(
+        () => true,
+        () => false,
+      )
+      const keyExists = await fs.readFile(keyPath).then(
+        () => true,
+        () => false,
+      )
+      if (!certExists || !keyExists) {
+        // 自签名开发证书（仅 Virtual IPP 测试用途；CN=localhost + 回环 SAN）
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            'openssl',
+            [
+              'req', '-x509', '-newkey', 'rsa:2048',
+              '-keyout', keyPath, '-out', certPath,
+              '-days', '3650', '-nodes',
+              '-subj', '/CN=OPS Virtual IPP Dev',
+              '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1',
+            ],
+            { timeout: 20000 },
+            (err) => (err ? reject(err) : resolve()),
+          )
+        })
+      }
+      const [cert, key] = await Promise.all([fs.readFile(certPath), fs.readFile(keyPath)])
+      await new Promise<void>((resolve, reject) => {
+        const server = createTlsServer({ cert, key }, (req, res) => {
+          void this.handle(req, res).catch((err) => {
+            console.error('[vipp-tls] request handler error:', err)
+            if (!res.headersSent) {
+              res.writeHead(500, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ error: String(err) }))
+            } else {
+              res.end()
+            }
+          })
+        })
+        server.once('error', reject)
+        server.listen(port, () => {
+          server.off('error', reject)
+          resolve()
+        })
+        this.tlsServer = server
+      })
+      console.log(`[vipp] Virtual IPP Server TLS (ipps) listening on :${port}（自签名开发证书，仅测试用途）`)
+    } catch (err) {
+      // 证书生成/监听失败 → 降级：不监听 TLS，明文 3061 功能不受影响
+      this.tlsServer = null
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[vipp] TLS 监听未启用（降级运行，ipps 不可用）：${message}`)
+    }
   }
 
   dispose(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     this.server?.close()
+    this.tlsServer?.close()
+    this.tlsServer = null
     this.server = null
   }
 

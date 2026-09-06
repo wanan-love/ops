@@ -7,8 +7,9 @@ import { ScenarioSkipped, type ScenarioApi } from './selftest'
  *  12. ipp-capability-unknown 导入 vipp-basic → 双面/耗材 UNKNOWN（属性缺失 ≠ 不支持）→ 打印仍成功
  *  13. ipp-cancel             提交多页任务 → 打印中取消 → IPP Cancel-Job 生效 → cancelled
  *  14. mdns-local-discovery   mDNS 扫描发现本机 Virtual IPP 通告（组播不可用 → skipped 而非 fail）
+ *  15. ipps-full-flow         ipps:// TLS 全链路（自签容忍 TOFU）→ 能力探测 → Print-Job over TLS → completed
  */
-export type IppScenarioId = 'ipp-full-flow' | 'ipp-capability-unknown' | 'ipp-cancel' | 'mdns-local-discovery'
+export type IppScenarioId = 'ipp-full-flow' | 'ipp-capability-unknown' | 'ipp-cancel' | 'mdns-local-discovery' | 'ipps-full-flow'
 
 export interface IppScenario {
   id: IppScenarioId
@@ -133,6 +134,36 @@ export const ippScenarios: IppScenario[] = [
         api.expect(first.txt['rp'] !== undefined || first.uri.includes('/printers/'), 'TXT rp 或 URI 路径应指向打印机资源')
         api.step('vipp 通告详情', `${first.name} → ${first.uri}`)
       }
+    },
+  },
+  {
+    id: 'ipps-full-flow',
+    name: 'ipps:// TLS 全链路（vipp-full）',
+    description: 'ipps://127.0.0.1:3063 导入 vipp-full → TLS 自签名容忍（TOFU）→ 能力探测（IPP 来源）→ 真实 IPP Print-Job over TLS → completed → 工件落盘',
+    async run(api) {
+      if (!api.vippAvailable()) throw new ScenarioSkipped('Virtual IPP Server 未启用（OPS_VIPP_ENABLED=0）')
+      if (!api.vippTlsAvailable()) throw new ScenarioSkipped('Virtual IPP TLS 未启用（证书生成失败或 OPS_VIPP_TLS=0）')
+      const tlsPort = 3063
+      const uri = `ipps://127.0.0.1:${tlsPort}/printers/vipp-full`
+      const printer = await api.importFromUri('ipp', uri)
+      api.step('导入 vipp-full（ipps/TLS）', `${printer.name}（${printer.backendUri ?? ''}）`)
+      const report = printer.capabilityReport
+      api.expect(printer.backend === 'ipp', `导入后 backend 应为 ipp（实际 ${printer.backend}）`)
+      api.expect(printer.backendUri === uri, `backendUri 应为 ipps URI（实际 ${printer.backendUri}）`)
+      api.expect(report !== undefined, '导入后应立即生成 capabilityReport（经 TLS Get-Printer-Attributes）')
+      if (!report) return
+      api.expect(report.probes.some((p) => p.source === 'IPP' && p.ok), 'probes 应含成功的 IPP 探测（TLS 链路）')
+      api.expect(report.color.state === 'supported' && report.color.value === true, `TLS 链路 color 应为 supported/true（实际 ${report.color.state}/${String(report.color.value)}）`)
+      api.expect(report.consumables.state === 'supported', `TLS 链路耗材应 supported（实际 ${report.consumables.state}）`)
+      const supplies = report.consumables.value ?? []
+      api.expect(supplies.length === 4, `TLS 链路应有 4 个耗材条目（实际 ${supplies.length}）`)
+      const job = await api.submit(printer, 2)
+      api.step('提交任务（over TLS）', `${job.id}（${job.sheetsTotal} 张，IPP Print-Job → https://127.0.0.1:${tlsPort}）`)
+      const done = await api.waitFor(job.id, (j) => j.state === 'completed', 30000)
+      api.expect(done.progress === 100, '任务应完成（progress=100）')
+      api.expect(done.backendJobId !== undefined && done.backendJobId !== '', 'job 应记录 backendJobId（IPP job-id）')
+      api.expect(await api.artifactExists(done, 'result.json'), 'result.json 已落盘')
+      api.step('完成', `backend job ${done.backendJobId}（TLS 链路），${done.printedSheets} 张`)
     },
   },
 ]
