@@ -7,7 +7,7 @@
     Name="OpenPrintShare"
     Version="$(Version)"
     Manufacturer="OpenPrintShare"
-    Language="1033" Codepage="1252"
+    Language="2052" Codepage="65001"
     UpgradeCode="7B9E45C0-5A62-4C4E-9C63-1E5F2A9D3B01"
     Scope="perMachine"
     InstallerVersion="500">
