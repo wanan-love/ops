@@ -1,0 +1,24 @@
+# OpenPrintShare 网关示例（与开发沙箱同款模式）
+# - 默认流量 → Web 控制台(:3000)
+# - ?XTransformPort={port} → 按查询参数转发到 ops-host 的 REST(:3001) / Realtime(:3002)
+:80 {
+	@transform_port_query {
+		query XTransformPort=*
+	}
+
+	handle @transform_port_query {
+		reverse_proxy ops:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		reverse_proxy ops:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

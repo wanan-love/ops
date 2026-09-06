@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.github
+.zscripts
+db
+examples
+download
+docs
+*.log
+mini-services/ops-host/data
+data
+tests
+*.md
+!README.md

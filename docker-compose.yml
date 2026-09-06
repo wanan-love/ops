@@ -1,0 +1,27 @@
+# OpenPrintShare 容器编排：Web + Host 单容器 + Caddy 网关（复制沙箱的 XTransformPort 模式）
+services:
+  ops:
+    build: .
+    image: ghcr.io/wanan-love/ops:latest
+    restart: unless-stopped
+    environment:
+      - OPS_DATA_DIR=/app/data/mock-printer
+    volumes:
+      - ops-data:/app/data
+    expose:
+      - "3000"
+      - "3001"
+      - "3002"
+
+  gateway:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/Caddyfile.example:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - ops
+
+volumes:
+  ops-data:
