@@ -26,7 +26,7 @@ jobs:
           OPS_EXPORT=1 bunx next build
           (cd mini-services/ops-host && bun install --frozen-lockfile && bun ../../scripts/build-web-embed.ts ../../out)
 
-      - name: Package Linux (x64: binary + .deb + AppImage; arm64: binary + .deb)
+      - name: "Package Linux (x64: binary + .deb + AppImage; arm64: binary + .deb)"
         run: |
           bash scripts/build-linux.sh x64
           # arm64 附加产物（AppImage 工具链对 arm64 CI 环境按需跳过）
