@@ -1,6 +1,7 @@
 'use client'
 
 import type {
+  BackendKind,
   DiscoveredHost,
   HostInfo,
   HostSettings,
@@ -159,8 +160,75 @@ export function createOpsClient(port: number) {
     testScenarios: () => request<{ scenarios: Array<{ id: string; name: string; description: string }> }>(port, 'GET', '/tests/scenarios'),
     runTests: (ids?: string[]) => request<{ runId: string }>(port, 'POST', '/tests/run', { json: ids ? { ids } : {} }),
     testRuns: () => request<{ runs: TestRun[] }>(port, 'GET', '/tests/runs'),
+
+    // 打印后端（第二阶段：Mock / IPP / CUPS / Windows 统一接口）
+    backends: () => request<{ backends: BackendStatus[] }>(port, 'GET', '/backends'),
+    backendPrinters: (kind: string) => request<{ printers: BackendPrinterRef[] }>(port, 'GET', `/backends/${encodeURIComponent(kind)}/printers`),
+    importPrinter: (input: { backend: string; key: string; shared?: boolean; displayName?: string }) =>
+      request<{ printer: Printer }>(port, 'POST', '/printers/import', { json: input }),
+    addPrinterUri: (input: { uri: string; shared?: boolean; displayName?: string }) =>
+      request<{ printer: Printer }>(port, 'POST', '/printers/add-uri', { json: input }),
+    refreshCapabilities: (id: string) =>
+      request<{ printer: Printer }>(port, 'POST', `/printers/${encodeURIComponent(id)}/refresh-capabilities`),
+
+    // Virtual IPP Server
+    vippPrinters: () => request<VippInfo>(port, 'GET', '/vipp/printers'),
+    setVippCondition: (id: string, condition: string, message?: string) =>
+      request<{ ok: boolean; message?: string }>(port, 'POST', `/vipp/printers/${encodeURIComponent(id)}/condition`, { json: { condition, message } }),
+
+    // mDNS 网络打印机发现
+    mdnsScan: () => request<{ printers: DiscoveredIpPrinter[] }>(port, 'POST', '/discovery/mdns/scan'),
   }
 }
 
 export type OpsClient = ReturnType<typeof createOpsClient>
 export type { ScenarioResult }
+
+/** 后端可用性状态（GET /api/backends） */
+export interface BackendStatus {
+  kind: BackendKind
+  available: boolean
+  note: string
+}
+
+/** 后端内打印机引用（listPrinters 结果） */
+export interface BackendPrinterRef {
+  key: string
+  displayName: string
+  description?: string
+  location?: string
+  uri?: string
+  makeAndModel?: string
+}
+
+/** Virtual IPP Server 信息 */
+export interface VippPrinterInfo {
+  id: string
+  name: string
+  profile: string
+  state: 'idle' | 'processing' | 'stopped'
+  stateReasons: string[]
+  queuedJobs: number
+  activeJobId: string | null
+  completedJobs: number
+  ppm: number
+  condition: string
+  updatedAt: string
+}
+
+export interface VippInfo {
+  port: number
+  dataDir: string
+  printers: VippPrinterInfo[]
+}
+
+/** mDNS 发现的网络 IPP 打印机 */
+export interface DiscoveredIpPrinter {
+  name: string
+  host: string
+  ip: string
+  port: number
+  uri: string
+  txt: Record<string, string>
+  source: string
+}

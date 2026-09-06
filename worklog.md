@@ -146,3 +146,68 @@ Stage Summary:
 3. 【中】阶段 8/9（Android/iOS 原生客户端）：协议文档已就绪（docs/NATIVE_CLIENTS.md），可开始 Kotlin/Swift 工程
 4. 【中】阶段 10（真实打印 Backend）：WindowsPrinterBackend/CupsPrinterBackend 接口已定义（src/backends/index.ts），需在真实 Windows/macOS/Linux 环境实现
 5. 【低】生产化：TLS（反向代理）、Host 控制台鉴权、mDNS 正式接入（Bonjour/Avahi）、SQLite 索引层
+
+---
+Task ID: 2-b
+Agent: general-purpose
+Task: ops-host 真实打印后端层（能力三态 + IPP 协议栈 + Virtual IPP Server + CUPS/Windows/SNMP + mDNS + Host 集成）
+
+Work Log:
+- 开工核对：上会话代码骨架已全部落盘（14 个新文件），但 Host 仍跑旧进程（:3061 未监听、/api/backends 404）、代码存在 10 处 strict 类型错误、tmp-test-*.ts 临时脚本未清理；本次会话完成「类型修复→协议自测→里程碑修复→重启→全量回归」
+- 类型修复（7 文件，strict tsc 0 error）：①backends/index.ts BackendManager 字段/方法重名 cachedAvailability→availCache ②ipp/capabilities.ts 四个 cap 显式标注 CapabilityReport['xxx'] ③ipp/client.ts baseOperationGroup 返回 EncGroup、extra 参数 EncAttr[]、parseJobSnapshotFromGroup 参数 IppGroup ④backend-jobs.ts jobUri null→undefined ⑤core/jobs.ts filter?.test（第一阶段遗留）⑥printers.ts defaultOptions 显式 PrintOptions ⑦routes.ts PATCH /api/settings 补 await（第一阶段遗留真 bug：Promise 序列化为 {}）+ runs 显式 unknown[]
+- 协议独立自测（临时脚本运行后删除）：IPP protocol round-trip 25 断言全过（version/header/多值属性/中文 UTF-8/PDF data 截取/Get-Jobs 多 job 组/截断抛错）；VirtualIppServer 冒烟 8 组全过（4 档案属性差异/full 打印到 completed/Cancel/条件注入 printer-state=5+reasons/落盘 document.pdf+job.json）
+- 里程碑修复：backend-jobs.ts applyBackendStatus completed 分支补齐剩余 25/50/75/100 里程碑（首跑自测 ipp-full-flow 失败定位：2 页任务 60ppm 时 poll 间隔直接从 50% 跳 completed，100 里程碑缺失）
+- 服务重启：kill 旧进程（9702/9704）后实测平台无 watchdog、直接 nohup/setsid 启动的进程会在 bash 工具调用结束时被回收；改用嵌套 bash -c 'setsid nohup bun index.ts … &' 启动 → 孤儿进程 PPID=1 跨调用常驻（与现存 bun run dev 同机制）
+- 端到端验证（curl 实测）：GET /api/backends 4 后端（mock/ipp 可用，cups/windows 不可用带说明）；/api/backends/ipp/printers 4 台 vipp；POST /api/printers/import vipp-full → CapabilityReport（color supported+IPP、duplex both、maxCopies 99、耗材 4 条 82/64/91/77、probes=[IPP ok]）；POST /api/jobs 提交 3 页 PDF → backend-submit timeline → backendJobId=1 → 25/50 里程碑 → completed（IPP job-state=9）→ vipp 服务端 completed+落盘 → result.json success
+- 能力三态验证：import vipp-basic → duplex/consumables state=unknown（属性缺失≠不支持）且 capabilities.duplex 钳制为 both（unknown 不钳最小）→ 打印仍 completed；add-uri ipps:// → 全 unknown + probe error 注明 TLS 未实现；refresh-capabilities → IPP probe ok(5ms) + SNMP probe fail(7ms) 并存且 IPP 能力保留（协议失败不影响其它能力）
+- mDNS 验证：POST /api/discovery/mdns/scan → 发现 4 台 vipp（uri ipp://127.0.0.1:3061/printers/*、TXT rp/ty/pdl、PTR/SRV/TXT/A/DNS 压缩名全链路）；场景 14 真实发现非 skipped
+- WS 验证：socket.io :3002 收到 backend:update（/api/backends 触发）与 vipp:update（条件注入触发）事件
+- 其它端点：/api/vipp/printers/:id/condition（media-needed→stopped）与 /speed、/api/printers/:id/refresh-capabilities、POST /api/storage/clear-test-data（清 37 打印机/51 任务/5 runs）、DELETE /api/printers/:id（真实后端打印机可删）；GET /api/printers 旧字段全部保留（向后兼容）
+- 清理：删除 tmp-test-protocol.ts/tmp-test-vipp.ts/tsconfig.check.json/测试导入打印机（保留 ipp-vipp-full shared 演示机）；根目录 bun run lint 0 error
+
+Stage Summary:
+- 产物清单（本任务新增/修改，仅 ops-host，前端零改动）：
+  - 新增：src/backends/ipp/{protocol,client,capabilities}.ts（RFC 8010/8011 自研二进制编解码 + HTTP 客户端 + 报告解析）、src/backends/{ipp-backend,cups,windows,snmp,merge}.ts、src/vipp/server.ts（Virtual IPP Server :3061）、src/core/backend-jobs.ts（BackendJobRunner + BackendStatusSync）、src/discovery/mdns.ts、src/tests/scenarios-ipp.ts
+  - 修改：src/core/types.ts（能力三态/四元组/ConsumableInfo/Probe/CapabilityReport、Printer.backendKey/backendUri/capabilityReport、PrintJob.backendJobId/backendJobUri、BackendKind 'ipp'、HostInfo.backends、DiscoveredIpPrinter、VippPrinterSnapshot）、src/backends/index.ts（统一七方法接口 + Mock 适配 + BackendManager）、src/core/printers.ts（importFromBackend/refreshCapabilities）、src/core/jobs.ts、src/http/routes.ts（10 个新端点）、src/ws/realtime.ts（backend:update/vipp:update）、src/host.ts（vipp/backends/runner/statusSync/mdns 装配 + OPS_VIPP_* 环境变量）
+- 新增 REST 端点（全部向后兼容）：GET /api/backends、GET /api/backends/:kind/printers、POST /api/printers/import、POST /api/printers/add-uri、POST /api/printers/:id/refresh-capabilities、GET /api/vipp/printers、POST /api/vipp/printers/:id/condition、POST /api/vipp/printers/:id/speed、GET /api/discovery/mdns、POST /api/discovery/mdns/scan；WS 新增 backend:update / vipp:update
+- 验证结果：自测 14/14 pass（10 旧场景不改动全过 + ipp-full-flow / ipp-capability-unknown / ipp-cancel / mdns-local-discovery 全 pass）；tsc strict 0 error；lint 0 error；:3001/:3002/:3061/:5353(UDP) 全监听；HostInfo.backend='ipp'（主后端）、backends=['mock','ipp','cups','windows']
+- 需真实硬件验证项（代码完备、本环境标记不可用）：CUPS（lpstat/lp/cancel + ipp://localhost:631，需 macOS/Linux CUPS 宿主）、Windows（PowerShell Get-Printer/Win32_Printer/PrintTo/Remove-PrintJob，需 Windows 宿主）、SNMP 墨量（RFC 3805 prtMarkerSupplies，需网络打印机，失败已验证仅记 probe）、ipps:// TLS、mDNS 跨主机发现（本机回环已验证）
+- 运维注意：Host 常驻进程启动需用 `bash -c 'cd mini-services/ops-host && setsid nohup bun index.ts >> host.log 2>&1 < /dev/null &'`（直接 nohup 会被 bash 工具会话回收）；平台无自动 watchdog，kill 后需手动拉起
+
+---
+Task ID: 2-a
+Agent: main-agent
+Task: Web UI 溢出修复（第二阶段第一优先级）
+
+Work Log:
+- 全面审计：8 档视口（320/375/640/768/820/1024/1280/1536）× 8 视图 + 极端数据（80 字符打印机名 / 120 字符文件名 / 超长设备名/位置）逐一检测 documentElement.scrollWidth 与溢出元素定位
+- 核心修复 1【队列表格】：<md 切换为卡片列表（JobCard 组件，44px 触控目标、全信息无横向滚动）；≥md 表格改 table-fixed + 响应式列宽（w-28/w-24/w-36/w-16 → lg 放宽），768px 容器内完整显示（原 898px 表格 + 607px 横向滚动 → 0px）
+- 核心修复 2【布局根因】：发现并修复 grid-cols-1 下子元素残留 col-span-2 导致隐式第二轨道（Chrome computed "0px 300px"）→ 改 sm:col-span-2；任务详情 Sheet 移动端单列（grid-cols-1 sm:grid-cols-2）
+- 核心修复 3【SimButton 溢出】：table-auto/grid minmax(0,1fr) 轨道 + Button 默认 whitespace-nowrap + shrink-0 导致 320px 下 "Cancel Current Job" 等英文标签溢出 46px（scrollWidth 325）→ SimButton 标签允许换行（whitespace-normal + h-auto + 标签 span min-w-0 break-words）
+- 其余修复：打印机页头部 flex-wrap、队列筛选组 flex-wrap + Select w-28 sm:w-32、debug 清理按钮 shrink（shadcn Button 自带 flex-shrink:0 导致拒绝收缩）
+- 根因方法论：不用 overflow:hidden 掩盖，逐一定位到 table-auto 空间分配、CSS Grid 隐式轨道、flex-shrink:0 三类真实布局原因并修复
+
+Stage Summary:
+- 最终回归：8 档宽度 × 8 视图全部 0px 横向溢出；console/page errors 0；lint 0 error
+- 触控合规：移动端卡片操作按钮实测 ≥44px
+- 改动文件：queue-view（卡片+表格+Sheet）、debug-view（SimButton+清理按钮）、printers-view（头部）
+
+---
+Task ID: 2-c
+Agent: main-agent
+Task: 前端接入第二阶段后端能力（能力三态 UI / 打印后端视图 / 真实打印流程）
+
+Work Log:
+- types.ts：能力三态模型 DTO（CapabilityState/Source、Capability<T> 四元组、ConsumableInfo、CapabilityReport、CapabilityProbe）+ BackendKind 增 'ipp' + Printer 增 backendKey/backendUri/capabilityReport + PrintJob 增 backendJobId/backendJobUri + BACKEND_LABEL/CAPABILITY_STATE_LABEL/CONSUMABLE_KIND_LABEL 字典
+- client.ts：新增 backends/backendPrinters/importPrinter/addPrinterUri/refreshCapabilities/vippPrinters/setVippCondition/mdnsScan 八个端点方法 + BackendStatus/BackendPrinterRef/VippInfo/DiscoveredIpPrinter DTO
+- widgets.tsx：新增 BackendBadge（mock/ipp/cups/windows/android/airprint 分色）、CapabilityStateBadge（SUPPORTED 绿/UNSUPPORTED 红/UNKNOWN 灰）、ConsumablePanel（耗材条 + 低量变色 + 未知文案）；InkBars 保留给 Mock
+- 新视图 backends-view.tsx（新 tab「打印后端」）：后端可用性卡片（含不可用原因）、Virtual IPP Server 面板（4 档案说明+导入按钮+状态/队列/完成数实时刷新 8s）、mDNS 扫描（_ipp._tcp 浏览 + 发现列表一键添加）、手动 IPP URI 添加表单
+- printers-view：卡片加 BackendBadge + backendUri 展示；【耗材模块按硬性要求处理】Mock 显示模拟墨量，真实后端仅当 capabilityReport.consumables 为 supported 才显示 ConsumablePanel，UNKNOWN 直接隐藏模块；能力报告 Collapsible（CapRow：三态徽章+值+source+timestamp+detail；来源探测列表含失败记录）；真实后端卡片加「刷新能力」按钮
+- print-view：打印机选择器标注后端（IPP）、耗材未知提示；overview：后端行显示全部激活后端；queue-view：详情 Sheet 增后端任务 #id/URI 两行
+- 浏览器端到端验证：导入 vipp-basic → 能力报告【双面=UNKNOWN、耗材=UNKNOWN（marker-levels 不存在）、其余 SUPPORTED】+ 耗材模块隐藏 → UI 提交 PDF → 真实 IPP Print-Job（backendJobId=3）→ 25/50/75/100 → completed（IPP job-state=9）→ 时间线含「通过 ipp 后端提交」「后端任务已创建」→ Sheet 显示后端任务信息；mDNS 扫描 UI 发现 4 台 vipp
+- 最终回归：9 tab × 4 宽度（320/375/768/1280）全部 0px 溢出、0 console 错误；种子打印机恢复共享；清理测试数据
+
+Stage Summary:
+- 前端完整支持第二阶段后端：能力三态可视化、多来源探测展示、耗材 UNKNOWN 隐藏（用户硬性要求）、真实 IPP 打印全流程 UI 可用
+- 产物：backends-view.tsx（新增）、types.ts/client.ts/widgets.tsx/printers-view/print-view/overview-view/queue-view/ops-app.tsx（扩展）、README.md（v0.2.0 重写后端章节/架构图/路线图）
+- 待办：GitHub 发布 v0.2.0 + cron 定时任务

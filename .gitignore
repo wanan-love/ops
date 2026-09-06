@@ -60,3 +60,6 @@ mini-services/*/host.log
 mini-services/*/data/mock-printer/*
 !mini-services/*/data/mock-printer/.gitkeep
 db/
+
+# agent 工具产物
+tool-results/

@@ -1,6 +1,7 @@
 import type { HostContext } from '../host'
 import type { PrintJob, ScenarioResult, TestStep } from '../core/types'
-import { makeApi, ScenarioFailure, type ScenarioApi } from './selftest'
+import { makeApi, ScenarioFailure, ScenarioSkipped, type ScenarioApi } from './selftest'
+import { ippScenarios } from './scenarios-ipp'
 
 /**
  * 10 个内置自动化场景（对应“Mock Printer 自动化测试”需求）：
@@ -14,6 +15,9 @@ import { makeApi, ScenarioFailure, type ScenarioApi } from './selftest'
  *  8. multi-queue       多任务排队：FIFO、同时最多 1 个在打
  *  9. concurrent-jobs   并发任务：两台打印机并行处理
  * 10. host-restart      Host 重启后的任务状态恢复（从磁盘恢复并续打）
+ *
+ * 阶段 2 追加（scenarios-ipp.ts，虚拟打印机场景不改动）：
+ * 11. ipp-full-flow / 12. ipp-capability-unknown / 13. ipp-cancel / 14. mdns-local-discovery
  */
 export type ScenarioId =
   | 'normal-print'
@@ -26,6 +30,10 @@ export type ScenarioId =
   | 'multi-queue'
   | 'concurrent-jobs'
   | 'host-restart'
+  | 'ipp-full-flow'
+  | 'ipp-capability-unknown'
+  | 'ipp-cancel'
+  | 'mdns-local-discovery'
 
 interface Scenario {
   id: ScenarioId
@@ -241,7 +249,7 @@ function durationMs(job: PrintJob): number {
 }
 
 export function scenarioMeta(): Array<{ id: string; name: string; description: string }> {
-  return scenarios.map(({ id, name, description }) => ({ id, name, description }))
+  return [...scenarios, ...ippScenarios].map(({ id, name, description }) => ({ id, name, description }))
 }
 
 export async function runScenarios(
@@ -250,7 +258,8 @@ export async function runScenarios(
   onProgress: (results: ScenarioResult[]) => void,
 ): Promise<ScenarioResult[]> {
   const results: ScenarioResult[] = []
-  for (const scenario of scenarios) {
+  const all: Scenario[] = [...scenarios, ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) }))]
+  for (const scenario of all) {
     if (!ids.includes(scenario.id)) continue
     const startedAt = Date.now()
     const steps: TestStep[] = []
@@ -267,6 +276,20 @@ export async function runScenarios(
         steps,
       }
     } catch (err) {
+      if (err instanceof ScenarioSkipped) {
+        // 环境原因跳过（组播不可用 / 后端禁用等）——不算失败
+        results.push({
+          id: scenario.id,
+          name: scenario.name,
+          description: scenario.description,
+          status: 'skipped',
+          durationMs: Date.now() - startedAt,
+          steps,
+          error: `SKIPPED：${err.message}`,
+        })
+        onProgress([...results])
+        continue
+      }
       const message = err instanceof ScenarioFailure ? err.message : err instanceof Error ? `${err.message}` : String(err)
       const failedIdx = steps.length > 0 ? steps.length - 1 : 0
       const markedSteps = [...steps]

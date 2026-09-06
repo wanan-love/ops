@@ -29,6 +29,8 @@ export function attachRealtime(ctx: HostContext, wsPort: number): { io: IOServer
     ctx.bus.on('pairing:update', ({ requests, devices }) => io.emit('pairing:update', { requests, devices })),
     ctx.bus.on('test:progress', ({ run }) => io.emit('test:progress', run)),
     ctx.bus.on('discovery:update', ({ hosts }) => io.emit('discovery:update', { hosts })),
+    ctx.bus.on('backend:update', ({ backends }) => io.emit('backend:update', { backends })),
+    ctx.bus.on('vipp:update', ({ printer }) => io.emit('vipp:update', { printer })),
     ctx.bus.on('snapshot', () => io.emit('snapshot', {})),
   ]
 

@@ -111,7 +111,7 @@ export class JobManager {
     if (filter?.printerId) items = items.filter((j) => j.printerId === filter.printerId)
     if (filter?.state) items = items.filter((j) => j.state === filter.state)
     if (filter?.deviceId) items = items.filter((j) => j.source.deviceId === filter.deviceId)
-    if (filter.test === false) items = items.filter((j) => !j.test)
+    if (filter?.test === false) items = items.filter((j) => !j.test)
     items.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
     return filter?.limit ? items.slice(0, filter.limit) : items
   }

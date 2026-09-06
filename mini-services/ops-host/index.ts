@@ -8,7 +8,8 @@ import { attachRealtime } from './src/ws/realtime'
  *
  *  REST     : 3001   （OPS/1.0 协议，网关 ?XTransformPort=3001）
  *  Realtime : 3002   （socket.io，path '/'，网关 ?XTransformPort=3002）
- *  数据目录 : ./data/mock-printer（可用 OPS_DATA_DIR 覆盖）
+ *  Virtual IPP Server : 3061 （阶段 2：自建 IPP 服务端，真实 RFC 8010 二进制链路；OPS_VIPP_ENABLED=0 可关）
+ *  数据目录 : ./data/mock-printer（可用 OPS_DATA_DIR 覆盖；vipp 任务在 ./data/virtual-ipp）
  *
  * bun --hot 热重载时通过 globalThis 守卫释放旧实例。
  */
@@ -57,7 +58,7 @@ async function main(): Promise<RunningInstance> {
 main()
   .then((instance) => {
     g.__OPS_HOST_INSTANCE__ = instance
-    console.log('[ops-host] started — backend: MockPrinterBackend (Virtual Printer)')
+    console.log('[ops-host] started — backends: mock(Virtual Printer) + ipp(Virtual IPP Server :3061) + cups/windows(代码完备，本环境不可用)')
   })
   .catch((err) => {
     console.error('[ops-host] fatal:', err)

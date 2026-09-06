@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import type { Printer, PrinterCapabilities, PrinterStatus } from './types'
+import type { Printer, PrinterCapabilities, PrinterStatus, PrintOptions } from './types'
+import type { CapabilityReport, CapabilitySource } from './types'
+import type { BackendPrinterRef, PrinterBackend } from '../backends/index'
+import { mergeReports, resolveEffectiveCaps } from '../backends/merge'
 import type { FileStorage } from './storage'
 import type { EventBus } from './eventbus'
 import type { EventLog } from './eventlog'
@@ -13,6 +16,21 @@ export interface CreatePrinterInput {
   shared?: boolean
   test?: boolean
   capabilities?: Partial<PrinterCapabilities>
+}
+
+export interface ImportFromBackendOptions {
+  shared?: boolean
+  displayName?: string
+  /** Self-Test 场景导入的隔离打印机（clear-test-data 清理） */
+  test?: boolean
+}
+
+/** 后端 kind → 能力报告默认来源 */
+const BACKEND_SOURCE: Record<string, CapabilitySource> = {
+  ipp: 'IPP',
+  cups: 'CUPS',
+  windows: 'SYSTEM',
+  mock: 'SYSTEM',
 }
 
 function nowIso(): string {
@@ -182,6 +200,107 @@ export class PrinterRegistry {
     }
   }
 
+  // ------------------------------------------------------- 真实后端导入与能力刷新
+
+  /**
+   * 从后端导入打印机（幂等：同 backend+backendKey 已存在则更新）。
+   * 创建/更新 Printer 实体（backend/backendKey/backendUri/virtual=false）→ 立即 getCapabilities
+   * → 存 capabilityReport + resolveEffectiveCaps → capabilities → 落盘。
+   */
+  async importFromBackend(backend: PrinterBackend, ref: BackendPrinterRef, opts?: ImportFromBackendOptions): Promise<Printer> {
+    const kind = backend.kind
+    const id = `${kind}-${sanitizeKey(ref.key)}`
+    // 真实能力探测（失败也不阻塞导入 —— 全 unknown 报告 + 失败 probe）
+    const report = await backend.getCapabilities(ref.key)
+    const caps = resolveEffectiveCaps(report)
+    const defaultOptions: PrintOptions = {
+      paperSize: caps.paperSizes[0] ?? 'A4',
+      colorMode: caps.color ? 'color' : 'monochrome',
+      duplex: caps.duplex === 'none' ? 'none' : 'long-edge',
+      copies: 1,
+      quality: 'normal',
+    }
+    let printer = this.printers.get(id)
+    if (!printer) {
+      printer = {
+        id,
+        name: opts?.displayName ?? ref.displayName,
+        description: ref.description ?? `从 ${kind} 后端导入的打印机`,
+        location: ref.location ?? '',
+        backend: kind,
+        virtual: false,
+        shared: opts?.shared ?? true,
+        status: 'online',
+        statusMessage: '',
+        ink: fullInk(),
+        capabilities: caps,
+        defaultOptions,
+        speedOverridePpm: null,
+        stats: { submitted: 0, completed: 0, failed: 0, cancelled: 0, sheets: 0 },
+        test: opts?.test ?? false,
+        backendKey: ref.key,
+        backendUri: ref.uri,
+        capabilityReport: report,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      }
+      this.printers.set(id, printer)
+      this.log.printer(printer, `已从 ${kind} 后端导入打印机：${printer.name}（${ref.uri ?? ref.key}）`)
+    } else {
+      // 幂等更新：字段保留 / 能力刷新
+      printer.backendKey = ref.key
+      printer.backendUri = ref.uri
+      printer.capabilityReport = report
+      printer.capabilities = caps
+      printer.defaultOptions = defaultOptions
+      if (opts?.displayName) printer.name = opts.displayName
+      if (ref.description) printer.description = ref.description
+      if (ref.location !== undefined) printer.location = ref.location
+      if (opts?.shared !== undefined) printer.shared = opts.shared
+      if (opts?.test !== undefined) printer.test = opts.test
+      printer.updatedAt = nowIso()
+      this.log.printer(printer, `已刷新后端打印机导入信息：${printer.name}（${ref.uri ?? ref.key}）`)
+    }
+    await this.persistNow()
+    this.bus.emit('printer:update', { printer })
+    return printer
+  }
+
+  /**
+   * 刷新能力（并行探测：后端属性 + SNMP 耗材等额外来源 → merge）。
+   * 失败仅记录 probe，不覆盖已有已知数据（旧报告作为兑底输入参与合并 —— 保留上次成功值 + 原时间戳）。
+   */
+  async refreshCapabilities(
+    printer: Printer,
+    backend: PrinterBackend | null,
+    extras?: Promise<Array<{ source: CapabilitySource; report: CapabilityReport }>>,
+  ): Promise<CapabilityReport> {
+    const source = BACKEND_SOURCE[printer.backend] ?? 'UNKNOWN'
+    const inputs: Array<{ source: CapabilitySource; report: CapabilityReport }> = []
+    const [backendReport, extraList] = await Promise.all([
+      backend && printer.backendKey
+        ? backend.getCapabilities(printer.backendKey)
+        : Promise.resolve(null),
+      extras ?? Promise.resolve([] as Array<{ source: CapabilitySource; report: CapabilityReport }>),
+    ])
+    if (backendReport) inputs.push({ source, report: backendReport })
+    for (const extra of extraList) inputs.push(extra)
+    // 旧报告（去除 probes）作为兑底：新探测 unknown 时保留上次成功值
+    if (printer.capabilityReport) {
+      const prev = printer.capabilityReport
+      inputs.push({ source: 'UNKNOWN', report: { ...prev, probes: [] } })
+    }
+    const merged = mergeReports(inputs)
+    // probes 补齐：本次后端探测若成功但未带 probe（不会发生，IPP/CUPS/SYSTEM 都带）—— 保守处理
+    printer.capabilityReport = merged
+    printer.capabilities = resolveEffectiveCaps(merged)
+    printer.updatedAt = nowIso()
+    await this.persistNow()
+    this.bus.emit('printer:update', { printer })
+    this.log.printer(printer, `能力已刷新（${merged.probes.length} 条探测记录，color=${merged.color.state}，duplex=${merged.duplex.state}，耗材=${merged.consumables.state}）`)
+    return merged
+  }
+
   setStatus(printer: Printer, status: PrinterStatus, message: string): void {
     printer.status = status
     printer.statusMessage = message
@@ -213,4 +332,15 @@ export class PrinterRegistry {
     this.lastPersistAt = Date.now()
     await this.storage.writeJson(REL, this.listAll())
   }
+}
+
+/** 导入 id 的 key 清洗（URI / queue 名 → 合法 id 片段） */
+function sanitizeKey(key: string): string {
+  const cleaned = key
+    .replace(/^[a-z]+:\/\//i, '')
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48)
+  return cleaned === '' ? randomUUID().slice(0, 8) : cleaned
 }

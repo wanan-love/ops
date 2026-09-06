@@ -14,6 +14,7 @@ import { QueueView } from './queue-view'
 import { PairingView } from './pairing-view'
 import { DebugView } from './debug-view'
 import { EventsView } from './events-view'
+import { BackendsView } from './backends-view'
 import { Header } from './header'
 import { Footer } from './footer'
 
@@ -24,6 +25,7 @@ const TAB_ITEMS = [
   { value: 'print', label: '打印' },
   { value: 'queue', label: '打印队列' },
   { value: 'pairing', label: '设备配对' },
+  { value: 'backends', label: '打印后端' },
   { value: 'debug', label: '调试控制台' },
   { value: 'events', label: '事件日志' },
 ] as const
@@ -141,6 +143,7 @@ export default function OpsApp() {
           {tab === 'print' && <PrintView goto={goto} />}
           {tab === 'queue' && <QueueView />}
           {tab === 'pairing' && <PairingView />}
+          {tab === 'backends' && <BackendsView goto={goto} />}
           {tab === 'debug' && <DebugView goto={goto} />}
           {tab === 'events' && <EventsView />}
         </motion.div>

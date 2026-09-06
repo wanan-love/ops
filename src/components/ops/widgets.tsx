@@ -1,11 +1,76 @@
 'use client'
 
-import { Pause, OctagonX, CircleCheck, CircleDashed, CircleAlert, Loader2, CircleOff, FileText } from 'lucide-react'
+import { Pause, OctagonX, CircleCheck, CircleDashed, CircleAlert, Loader2, CircleOff, FileText, HelpCircle, MinusCircle, ServerCog } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
-import type { InkLevels, JobState, PrintJob, PrinterStatus, TimelineEntry } from '@/lib/ops/types'
-import { JOB_STATE_LABEL, PRINTER_STATUS_LABEL } from '@/lib/ops/types'
+import type { ConsumableInfo, InkLevels, JobState, PrintJob, PrinterStatus, TimelineEntry } from '@/lib/ops/types'
+import { BACKEND_LABEL, CAPABILITY_STATE_LABEL, CONSUMABLE_KIND_LABEL, JOB_STATE_LABEL, PRINTER_STATUS_LABEL } from '@/lib/ops/types'
+
+/** 打印后端徽章（Mock / IPP / CUPS / Windows） */
+export function BackendBadge({ backend, className }: { backend: string; className?: string }) {
+  const map: Record<string, { className: string; label: string }> = {
+    mock: { className: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400', label: 'Mock · Virtual' },
+    ipp: { className: 'border-teal-500/40 bg-teal-500/10 text-teal-700 dark:text-teal-400', label: 'IPP 直连' },
+    cups: { className: 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-400', label: 'CUPS' },
+    windows: { className: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400', label: 'Windows' },
+    android: { className: 'border-lime-500/40 bg-lime-500/10 text-lime-700 dark:text-lime-400', label: 'Android' },
+    airprint: { className: 'border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-400', label: 'AirPrint' },
+  }
+  const item = map[backend] ?? { className: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600', label: backend }
+  return (
+    <Badge variant="outline" className={cn('gap-1 font-medium', item.className, className)} title={BACKEND_LABEL[backend as keyof typeof BACKEND_LABEL] ?? backend}>
+      <ServerCog className="size-3" aria-hidden />
+      {item.label}
+    </Badge>
+  )
+}
+
+/** 能力三态徽章（SUPPORTED / UNSUPPORTED / UNKNOWN） */
+export function CapabilityStateBadge({ state, className }: { state: string; className?: string }) {
+  const map: Record<string, { className: string; icon: React.ReactNode }> = {
+    supported: { className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', icon: <CircleCheck className="size-3" aria-hidden /> },
+    unsupported: { className: 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400', icon: <MinusCircle className="size-3" aria-hidden /> },
+    unknown: { className: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400', icon: <HelpCircle className="size-3" aria-hidden /> },
+  }
+  const item = map[state] ?? map.unknown
+  return (
+    <Badge variant="outline" className={cn('gap-1 font-mono text-[10px] font-semibold tracking-wide', item.className, className)}>
+      {item.icon}
+      {CAPABILITY_STATE_LABEL[state as keyof typeof CAPABILITY_STATE_LABEL] ?? state}
+    </Badge>
+  )
+}
+
+/** 耗材面板（真实 IPP/SNMP 读取；UNKNOWN 时由调用方直接隐藏本模块） */
+export function ConsumablePanel({ consumables, timestamp }: { consumables: ConsumableInfo[]; timestamp?: string }) {
+  if (consumables.length === 0) return null
+  return (
+    <div className="space-y-1.5">
+      {consumables.map((c, i) => (
+        <div key={`${c.name}-${i}`} className="flex items-center gap-2">
+          <span className="w-24 truncate text-[11px] text-muted-foreground" title={`${c.name}（${CONSUMABLE_KIND_LABEL[c.kind]}）`}>
+            {c.name}
+          </span>
+          {c.levelPct !== null && c.levelPct >= 0 ? (
+            <>
+              <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div
+                  className={cn('h-full rounded-full transition-all', c.levelPct <= 15 ? 'bg-orange-500' : c.levelPct <= 30 ? 'bg-amber-500' : 'bg-emerald-500')}
+                  style={{ width: `${Math.min(100, Math.max(0, c.levelPct))}%` }}
+                />
+              </div>
+              <span className="w-10 text-right font-mono text-[11px] tabular-nums text-muted-foreground">{c.levelPct}%</span>
+            </>
+          ) : (
+            <span className="flex-1 text-[11px] text-muted-foreground/60">剩余量未知（设备未上报数值）</span>
+          )}
+        </div>
+      ))}
+      {timestamp && <p className="text-[10px] text-muted-foreground/60">读取时间 {formatTime(timestamp)} · 来源 {consumables[0]?.source ?? 'UNKNOWN'}</p>}
+    </div>
+  )
+}
 
 /** 打印机状态徽标 */
 export function PrinterStatusBadge({ status, className }: { status: PrinterStatus; className?: string }) {

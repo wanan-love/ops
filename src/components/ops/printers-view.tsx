@@ -2,25 +2,30 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { CircuitBoard, Layers3, Link2Off, MapPin, Palette, Plus, Printer, PrinterCheck, Share2, Trash2, Gauge } from 'lucide-react'
+import { CircuitBoard, ChevronDown, Layers3, Link2Off, MapPin, Palette, Plus, Printer, PrinterCheck, RefreshCw, Share2, Trash2, Gauge, Globe } from 'lucide-react'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
-import { InkBars, PrinterStatusBadge, EmptyState, formatBytes } from './widgets'
-import type { Printer } from '@/lib/ops/types'
+import { BackendBadge, CapabilityStateBadge, ConsumablePanel, InkBars, PrinterStatusBadge, EmptyState, formatTime } from './widgets'
+import type { Capability, Printer } from '@/lib/ops/types'
 
 export function PrintersView() {
   const printers = useOpsStore((s) => s.printers)
   const client = useOpsClient()
   const [creating, setCreating] = useState(false)
+
+  const mockCount = printers.filter((p) => p.backend === 'mock').length
+  const realCount = printers.length - mockCount
 
   const toggleShare = async (printer: Printer) => {
     try {
@@ -44,18 +49,20 @@ export function PrintersView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {printers.filter((p) => p.shared).length} / {printers.length} 台已共享 · 全部为 Virtual Printer（MockPrinterBackend）
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 basis-52 text-sm text-muted-foreground">
+          {printers.filter((p) => p.shared).length} / {printers.length} 台已共享 · {mockCount} 台 Mock 虚拟 + {realCount} 台真实后端（IPP/CUPS/Windows）
         </p>
-        <Button size="sm" onClick={() => setCreating(true)}>
-          <Plus className="size-3.5" aria-hidden />
-          添加虚拟打印机
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+            <Plus className="size-3.5" aria-hidden />
+            添加虚拟打印机
+          </Button>
+        </div>
       </div>
 
       {printers.length === 0 ? (
-        <EmptyState icon={<Printer className="size-6" aria-hidden />} title="还没有打印机" hint="创建一台 Virtual Printer 即可开始完整演示" />
+        <EmptyState icon={<Printer className="size-6" aria-hidden />} title="还没有打印机" hint="创建一台 Virtual Printer，或在「打印后端」页导入 Virtual IPP / 真实打印机" />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {printers.map((printer) => (
@@ -73,9 +80,31 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
   const client = useOpsClient()
   const [deleting, setDeleting] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
   const activeJob = useOpsStore((s) => s.jobs.find((j) => j.id === printer.activeJobId))
 
   const duplexLabel = printer.capabilities.duplex === 'none' ? '单面' : printer.capabilities.duplex === 'both' ? '双面（长/短边）' : printer.capabilities.duplex === 'long-edge' ? '双面·长边' : '双面·短边'
+  const isRealBackend = printer.backend !== 'mock'
+  const report = printer.capabilityReport
+
+  /** 耗材展示策略：Mock → 模拟墨量（SYSTEM 来源，定义即真实）；真实后端 → 仅当 capabilityReport.consumables 为 supported 才显示，UNKNOWN 时隐藏模块 */
+  const consumablesSupported = report?.consumables.state === 'supported' && Array.isArray(report.consumables.value) && report.consumables.value.length > 0
+
+  const refreshCaps = async () => {
+    setRefreshing(true)
+    try {
+      const { printer: updated } = await client.refreshCapabilities(printer.id)
+      const unknownCount = Object.values(updated.capabilityReport ?? {}).filter((c: { state?: string }) => c && typeof c === 'object' && c.state === 'unknown').length
+      toast.success('能力已重新探测', {
+        description: unknownCount > 0 ? `探测完成：${unknownCount} 项为 UNKNOWN（读取不到 ≠ 不支持，不影响打印）` : '探测完成：全部能力已确认',
+      })
+    } catch (e) {
+      toast.error('探测失败', { description: (e as Error).message })
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <Card className="min-w-0 gap-4 transition-all duration-200 hover:border-primary/25 hover:shadow-md">
@@ -84,16 +113,23 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <span className="truncate">{printer.name}</span>
             {printer.test && <Badge variant="secondary" className="text-[10px]">TEST</Badge>}
+            <BackendBadge backend={printer.backend} />
           </CardTitle>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{printer.description}</p>
+          {printer.backendUri && (
+            <p className="mt-0.5 flex items-center gap-1 truncate font-mono text-[10px] text-muted-foreground/70" title={printer.backendUri}>
+              <Globe className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{printer.backendUri}</span>
+            </p>
+          )}
           {printer.location && (
             <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground/70">
-              <MapPin className="size-3" aria-hidden />
-              {printer.location}
+              <MapPin className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{printer.location}</span>
             </p>
           )}
         </div>
-        <PrinterStatusBadge status={printer.status} />
+        <PrinterStatusBadge status={printer.status} className="shrink-0" />
       </CardHeader>
 
       <CardContent className="space-y-3">
@@ -108,7 +144,14 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
           </p>
         )}
 
-        <InkBars ink={printer.ink} />
+        {/* 耗材模块：有可靠数据才显示（用户硬性要求：UNKNOWN 时直接隐藏，不显示假 0%） */}
+        {isRealBackend ? (
+          consumablesSupported ? (
+            <ConsumablePanel consumables={report!.consumables.value!} timestamp={report!.consumables.timestamp} />
+          ) : null
+        ) : (
+          <InkBars ink={printer.ink} />
+        )}
 
         <div className="flex flex-wrap gap-1.5 rounded-lg text-[11px]">
           <Chip icon={<Palette className="size-3" aria-hidden />}>{printer.capabilities.color ? '彩色' : '黑白'}</Chip>
@@ -117,6 +160,49 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
           <Chip icon={<Gauge className="size-3" aria-hidden />}>{printer.speedOverridePpm ?? printer.capabilities.ppm} ppm</Chip>
           <Chip icon={<PrinterCheck className="size-3" aria-hidden />}>{printer.capabilities.maxResolutionDpi} dpi</Chip>
         </div>
+
+        {/* 能力报告（三态 + 来源 + 时间戳，真实后端打印机） */}
+        {report && (
+          <Collapsible open={reportOpen} onOpenChange={setReportOpen}>
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-200 hover:bg-muted/60">
+              <span>
+                能力报告（三态 / 来源 / 时间戳）{report.probes.length > 0 && <span className="ml-1 text-[10px] text-muted-foreground/60">{report.probes.length} 个来源探测</span>}
+              </span>
+              <ChevronDown className={cn('size-3.5 shrink-0 transition-transform duration-200', reportOpen && 'rotate-180')} aria-hidden />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 space-y-1.5 rounded-md border p-2.5">
+                <CapRow label="彩色" cap={report.color} render={(v) => (v ? '支持' : '不支持')} />
+                <CapRow label="双面" cap={report.duplex} render={(v) => (v === 'none' ? '仅单面' : v === 'both' ? '长边 + 短边' : v === 'long-edge' ? '长边' : '短边')} />
+                <CapRow label="份数上限" cap={report.maxCopies} render={(v) => `1–${v}`} />
+                <CapRow label="纸张尺寸" cap={report.paperSizes} render={(v) => v.join(' / ')} />
+                <CapRow label="分辨率" cap={report.maxResolutionDpi} render={(v) => `${v} dpi`} />
+                <CapRow label="速度" cap={report.ppm} render={(v) => `${v} ppm`} />
+                <CapRow
+                  label="耗材"
+                  cap={report.consumables}
+                  render={(v) => `${v.length} 项（${v.map((c) => (c.levelPct !== null ? `${c.levelPct}%` : '未知')).join(' / ')}）`}
+                />
+                {report.probes.length > 0 && (
+                  <div className="mt-2 border-t pt-2">
+                    <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">来源探测（失败不影响打印可用性）</p>
+                    <ul className="space-y-0.5">
+                      {report.probes.map((p, i) => (
+                        <li key={`${p.source}-${i}`} className="flex items-center gap-2 text-[11px]">
+                          <span className={cn('size-1.5 shrink-0 rounded-full', p.ok ? 'bg-emerald-500' : 'bg-red-500')} aria-hidden />
+                          <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground">{p.source}</span>
+                          <span className="min-w-0 truncate text-muted-foreground">
+                            {p.ok ? `成功（${p.durationMs}ms）` : p.error ?? '失败'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         <div className="grid grid-cols-4 gap-2 rounded-lg bg-muted/50 p-2 text-center">
           {[
@@ -141,7 +227,13 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
             {printer.shared ? '已共享' : '未共享'}
           </span>
         </label>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
+          {isRealBackend && (
+            <Button size="sm" variant="outline" onClick={() => void refreshCaps()} disabled={refreshing}>
+              <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} aria-hidden />
+              刷新能力
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={onTestPrint} disabled={busy}>
             <PrinterCheck className="size-3.5" aria-hidden />
             测试页
@@ -191,6 +283,20 @@ function Chip({ icon, children }: { icon: React.ReactNode; children: React.React
       {icon}
       {children}
     </span>
+  )
+}
+
+/** 能力报告行：三态徽章 + 值 + 来源 + 时间戳 */
+function CapRow<T>({ label, cap, render }: { label: string; cap: Capability<T>; render: (value: T) => string }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+      <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
+      <CapabilityStateBadge state={cap.state} />
+      <span className="min-w-0 flex-1 truncate text-foreground/80" title={cap.detail}>
+        {cap.state !== 'unknown' && cap.value !== null ? render(cap.value) : cap.detail ? cap.detail : '未读取到（读取不到 ≠ 不支持）'}
+      </span>
+      <span className="shrink-0 font-mono text-[9px] uppercase text-muted-foreground/50">{cap.source} · {formatTime(cap.timestamp)}</span>
+    </div>
   )
 }
 

@@ -10,8 +10,67 @@ export const OPS_API_VERSION = 1
 /** 客户端平台标识 */
 export type Platform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'web'
 
-/** 打印后端种类（可插拔，MVP 使用 mock） */
-export type BackendKind = 'mock' | 'windows' | 'cups' | 'android' | 'airprint'
+/** 打印后端种类（可插拔：mock=虚拟打印机 / ipp=IPP 协议直连 / cups=系统 CUPS / windows=Win32 打印栈） */
+export type BackendKind = 'mock' | 'windows' | 'cups' | 'ipp' | 'android' | 'airprint'
+
+/** 能力三态：supported=确定支持 / unsupported=确定不支持 / unknown=读取不到（≠ 不支持） */
+export type CapabilityState = 'supported' | 'unsupported' | 'unknown'
+
+/** 能力四元组数据来源：value + state + source + timestamp 缺一不可 */
+export type CapabilitySource =
+  | 'SYSTEM'   // 由 OPS 自身定义（虚拟打印机能力是定义出来的，确定）
+  | 'CUPS'     // CUPS 守护进程（lpstat / ipp://localhost:631）
+  | 'IPP'      // IPP Get-Printer-Attributes 响应属性
+  | 'WSD'      // WSD Scan/Print（预留）
+  | 'SNMP'     // Printer-MIB（RFC 3805）
+  | 'VENDOR_API' // 厂商私有 API（预留）
+  | 'UNKNOWN'
+
+/**
+ * 能力四元组：value + state + source + timestamp。
+ * state=unknown 时 value 必为 null（读取不到 ≠ 不支持，禁止精测）。
+ * detail 记录来源细节（IPP 属性名 / 探测错误原因）。
+ */
+export interface Capability<T> {
+  value: T | null
+  state: CapabilityState
+  source: CapabilitySource
+  timestamp: string
+  detail?: string
+}
+
+/** 耗材信息。levelPct=null 表示读取不到（UNKNOWN），UI 应回隐藏耗材模块而不是显示假 0% */
+export interface ConsumableInfo {
+  name: string
+  kind: 'toner' | 'ink' | 'drum' | 'maintenance-kit' | 'other'
+  color?: string
+  levelPct: number | null
+  source: CapabilitySource
+}
+
+/** 单个来源的能力探测记录（失败也保留，不影响其它能力与打印可用性） */
+export interface CapabilityProbe {
+  source: CapabilitySource
+  ok: boolean
+  durationMs: number
+  error?: string
+  at: string
+}
+
+/**
+ * 能力报告：每个能力均为四元组；probes 记录全部来源探测（含失败）。
+ * 任何协议探测失败（如 SNMP 超时）不影响其余能力，也不影响打印机可用。
+ */
+export interface CapabilityReport {
+  color: Capability<boolean>
+  duplex: Capability<'none' | 'long-edge' | 'short-edge' | 'both'>
+  maxCopies: Capability<number>
+  paperSizes: Capability<string[]>
+  maxResolutionDpi: Capability<number>
+  ppm: Capability<number>
+  consumables: Capability<ConsumableInfo[]>
+  probes: CapabilityProbe[]
+}
 
 /** 打印机状态（mock 引擎与真实后端共用语义） */
 export type PrinterStatus =
@@ -90,6 +149,12 @@ export interface Printer {
   stats: PrinterStats
   /** Self-Test 场景创建的隔离打印机 */
   test?: boolean
+  /** 后端内的打印机标识（CUPS queue 名 / vipp printer id / 手动添加的 URI） */
+  backendKey?: string
+  /** 后端打印机 URI（如 ipp://localhost:3061/printers/vipp-full） */
+  backendUri?: string
+  /** 最近一次能力探测报告（三态模型，含各来源 probes） */
+  capabilityReport?: CapabilityReport
   createdAt: string
   updatedAt: string
 }
@@ -126,6 +191,10 @@ export interface PrintJob {
   printedSheets: number
   inkUsed: InkLevels
   test?: boolean
+  /** 提交到真实后端后的后端任务 id（IPP job-id 等，Host 重启后据此恢复轮询） */
+  backendJobId?: string
+  /** 后端任务 URI（IPP job-uri） */
+  backendJobUri?: string
 }
 
 /** 模拟打印结果（落盘 result.json） */
@@ -182,6 +251,36 @@ export interface DiscoveredHost {
   lastSeenAt: string
 }
 
+/** mDNS 发现的网络打印机（_ipp._tcp / _pdl-datastream 等） */
+export interface DiscoveredIpPrinter {
+  /** 服务实例名（PTR 目标的首标签，如 "OPS Virtual IPP Full"） */
+  name: string
+  /** SRV target 主机名 */
+  host: string
+  /** A 记录解析出的 IP */
+  ip: string
+  port: number
+  /** 推导的 IPP URI（TXT rp 提供 resource path，缺省 ipp/print） */
+  uri: string
+  txt: Record<string, string>
+  source: 'mdns'
+}
+
+/** Virtual IPP Server 打印机快照（vipp:update 事件 / REST 响应） */
+export interface VippPrinterSnapshot {
+  id: string
+  name: string
+  profile: string
+  state: 'idle' | 'processing' | 'stopped'
+  stateReasons: string[]
+  queuedJobs: number
+  activeJobId: number | null
+  completedJobs: number
+  ppm: number
+  condition: string
+  updatedAt: string
+}
+
 export interface OpsEvent {
   id: string
   at: string
@@ -227,7 +326,10 @@ export interface HostInfo {
   apiVersion: number
   platform: Platform
   platformNote: string
+  /** 主后端（可用后端里优先 ipp/cups/windows，否则 mock）——保留旧字段以兼容现有前端 */
   backend: BackendKind
+  /** 激活的后端列表（阶段 2 新增） */
+  backends?: BackendKind[]
   uptimeSec: number
   securityMode: 'open' | 'pairing'
   restPort: number

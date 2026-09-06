@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useOpsClient, useOpsStore } from './store'
 import { EmptyState, JobProgress, JobStateBadge, formatBytes, formatTime } from './widgets'
+import { BACKEND_LABEL } from '@/lib/ops/types'
 import { useEffect, useState } from 'react'
 import type { SystemStats } from '@/lib/ops/types'
 import type { TabValue } from './ops-app'
@@ -87,7 +88,14 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             <Row label="平台" value={`${hostInfo?.platform ?? '—'}（Web Host 演示环境）`} />
             <Row label="运行时长" value={hostInfo ? formatUptime(hostInfo.uptimeSec + uptime) : '—'} mono />
             <Row label="安全模式" value={hostInfo?.securityMode === 'pairing' ? '配对（需令牌）' : '开放（局域网信任）'} />
-            <Row label="后端" value="MockPrinterBackend（Virtual Printer）" />
+            <Row
+              label="打印后端"
+              value={
+                hostInfo?.backends && hostInfo.backends.length > 0
+                  ? `${hostInfo.backends.map((b) => BACKEND_LABEL[b] ?? b).join(' + ')}（统一 PrinterBackend 接口）`
+                  : 'MockPrinterBackend（Virtual Printer）'
+              }
+            />
           </CardContent>
         </Card>
 

@@ -250,9 +250,9 @@ export function DebugView({ goto }: { goto: (v: TabValue) => void }) {
                 variant="outline"
                 size="sm"
                 onClick={() => act('clear', () => client.clearTestData(), '测试数据已清理')}
-                className="text-muted-foreground"
+                className="h-auto shrink whitespace-normal text-left text-muted-foreground"
               >
-                <Trash2 className="size-3.5" aria-hidden />
+                <Trash2 className="size-3.5 shrink-0" aria-hidden />
                 清理测试数据（TEST 打印机/任务/报告）
               </Button>
               <Button variant="ghost" size="sm" onClick={() => goto('queue')} className="ml-auto text-muted-foreground">
@@ -287,16 +287,16 @@ function SimButton({
   return (
     <Button
       variant="outline"
-      className="h-16 flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left transition-all duration-200 hover:border-primary/40 hover:shadow-xs active:translate-y-0.5"
+      className="h-auto min-h-16 flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left whitespace-normal transition-all duration-200 hover:border-primary/40 hover:shadow-xs active:translate-y-0.5"
       onClick={onClick}
       disabled={disabled || busy}
       aria-label={`${label}：${desc}`}
     >
-      <span className="flex w-full items-center gap-1.5 text-xs font-semibold">
-        {icon}
-        {busy ? '执行中…' : label}
+      <span className="flex w-full min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold">
+        <span className="shrink-0 [&>svg]:size-4 [&>svg]:shrink-0">{icon}</span>
+        <span className="min-w-0 break-words">{busy ? '执行中…' : label}</span>
       </span>
-      <span className="text-[10px] font-normal text-muted-foreground">{desc}</span>
+      <span className="text-[10px] font-normal leading-snug text-muted-foreground">{desc}</span>
     </Button>
   )
 }

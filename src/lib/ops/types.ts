@@ -3,7 +3,50 @@
  */
 
 export type Platform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'web'
-export type BackendKind = 'mock' | 'windows' | 'cups' | 'android' | 'airprint'
+export type BackendKind = 'mock' | 'windows' | 'cups' | 'ipp' | 'android' | 'airprint'
+
+/** 能力三态：supported=确认支持 / unsupported=确认不支持 / unknown=未读取到（≠不支持） */
+export type CapabilityState = 'supported' | 'unsupported' | 'unknown'
+/** 能力数据来源 */
+export type CapabilitySource = 'SYSTEM' | 'CUPS' | 'IPP' | 'WSD' | 'SNMP' | 'VENDOR_API' | 'UNKNOWN'
+
+/** 能力四元组：value + state + source + timestamp */
+export interface Capability<T> {
+  value: T | null
+  state: CapabilityState
+  source: CapabilitySource
+  timestamp: string
+  detail?: string
+}
+
+/** 耗材信息（levelPct=null 表示未知，UI 应隐藏而不是显示假 0%） */
+export interface ConsumableInfo {
+  name: string
+  kind: 'toner' | 'ink' | 'drum' | 'maintenance-kit' | 'other'
+  color?: string
+  levelPct: number | null
+  source: CapabilitySource
+}
+
+/** 单个来源的探测记录（失败也保留，不影响其它能力） */
+export interface CapabilityProbe {
+  source: CapabilitySource
+  ok: boolean
+  durationMs: number
+  error?: string
+  at: string
+}
+
+export interface CapabilityReport {
+  color: Capability<boolean>
+  duplex: Capability<'none' | 'long-edge' | 'short-edge' | 'both'>
+  maxCopies: Capability<number>
+  paperSizes: Capability<string[]>
+  maxResolutionDpi: Capability<number>
+  ppm: Capability<number>
+  consumables: Capability<ConsumableInfo[]>
+  probes: CapabilityProbe[]
+}
 
 export type PrinterStatus = 'online' | 'busy' | 'offline' | 'paper-out' | 'paper-jam' | 'error'
 export type JobState = 'pending' | 'processing' | 'paused' | 'completed' | 'failed' | 'cancelled'
@@ -64,6 +107,9 @@ export interface Printer {
   stats: PrinterStats
   test?: boolean
   activeJobId?: string | null
+  backendKey?: string
+  backendUri?: string
+  capabilityReport?: CapabilityReport
   createdAt: string
   updatedAt: string
 }
@@ -97,6 +143,8 @@ export interface PrintJob {
   printedSheets: number
   inkUsed: InkLevels
   test?: boolean
+  backendJobId?: string
+  backendJobUri?: string
 }
 
 export interface HostInfo {
@@ -108,6 +156,7 @@ export interface HostInfo {
   platform: Platform
   platformNote: string
   backend: BackendKind
+  backends?: BackendKind[]
   uptimeSec: number
   securityMode: 'open' | 'pairing'
   restPort: number
@@ -239,3 +288,26 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
 }
 
 export const OPS_VERSION = '0.1.0'
+
+export const BACKEND_LABEL: Record<BackendKind, string> = {
+  mock: 'Mock · 虚拟打印机',
+  ipp: 'IPP · 直连',
+  cups: 'CUPS · 系统',
+  windows: 'Windows · 系统打印',
+  android: 'Android Print',
+  airprint: 'AirPrint',
+}
+
+export const CAPABILITY_STATE_LABEL: Record<CapabilityState, string> = {
+  supported: 'SUPPORTED',
+  unsupported: 'UNSUPPORTED',
+  unknown: 'UNKNOWN',
+}
+
+export const CONSUMABLE_KIND_LABEL: Record<ConsumableInfo['kind'], string> = {
+  toner: '碳粉',
+  ink: '墨水',
+  drum: '鼓组件',
+  'maintenance-kit': '维护组件',
+  other: '其他',
+}

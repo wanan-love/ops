@@ -209,15 +209,17 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
                 {sharedPrinters.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name}
-                    {p.status !== 'online' && p.status !== 'busy' ? `（${p.status}）` : ''}
+                    {p.backend !== 'mock' ? `（${p.backend.toUpperCase()}）` : p.status !== 'online' && p.status !== 'busy' ? `（${p.status}）` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {effectivePrinter && (
               <p className="text-[11px] text-muted-foreground/70">
+                {effectivePrinter.backend !== 'mock' ? `${effectivePrinter.backend.toUpperCase()} 后端 · ` : ''}
                 {effectivePrinter.capabilities.color ? '支持彩色' : '仅黑白'} · {effectivePrinter.capabilities.paperSizes.join('/')} ·{' '}
                 {effectivePrinter.speedOverridePpm ?? effectivePrinter.capabilities.ppm} ppm
+                {effectivePrinter.capabilityReport?.consumables.state === 'unknown' ? ' · 耗材未知（未上报）' : ''}
               </p>
             )}
           </div>

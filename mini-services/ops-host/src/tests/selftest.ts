@@ -1,5 +1,5 @@
 import type { HostContext } from '../host'
-import type { PrintJob, Printer, ScenarioResult, TestRun, TestStep } from '../core/types'
+import type { DiscoveredIpPrinter, PrintJob, Printer, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
 import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
 
@@ -90,9 +90,27 @@ export interface ScenarioApi {
   failActive(printer: Printer, message?: string): void
   cancel(job: PrintJob): void
   artifactExists(job: PrintJob, rel: string): Promise<boolean>
+  // ---- 真实后端（阶段 2）----
+  /** 从后端导入打印机（SelfTest 隔离 test:true，幂等） */
+  importFromBackend(backend: 'ipp' | 'cups' | 'windows', key: string, opts?: { shared?: boolean; displayName?: string }): Promise<Printer>
+  /** mDNS 扫描（socket 不可用返回空） */
+  mdnsScan(): Promise<DiscoveredIpPrinter[]>
+  /** mDNS socket 是否可用（不可用 → 场景应 skipped） */
+  mdnsAvailable(): boolean
+  /** Virtual IPP Server 是否启用 */
+  vippAvailable(): boolean
+  /** 读取 vipp 打印机内部任务状态（验证 IPP Cancel-Job 等服务端效果） */
+  vippJobState(printerId: string, backendJobId: string): string | null
 }
 
 export class ScenarioFailure extends Error {
+  constructor(message: string) {
+    super(message)
+  }
+}
+
+/** 场景跳过（组播/后端不可用等环境原因，不算失败） */
+export class ScenarioSkipped extends Error {
   constructor(message: string) {
     super(message)
   }
@@ -172,10 +190,41 @@ export function makeApi(ctx: HostContext, steps: TestStep[]): ScenarioApi {
       ctx.engine.failActive(this.getPrinter(printer.id), message)
     },
     cancel(job) {
-      ctx.engine.cancelJob(this.getJob(job.id))
+      const current = this.getJob(job.id)
+      const printer = ctx.printers.get(current.printerId)
+      // 真实后端打印机 → BackendJobRunner（IPP Cancel-Job）；虚拟打印机 → 引擎取消
+      if (printer && printer.backend !== 'mock') {
+        void ctx.runner.cancel(current)
+      } else {
+        ctx.engine.cancelJob(current)
+      }
     },
     async artifactExists(job, rel) {
       return ctx.storage.exists(`jobs/${job.id}/${rel}`)
+    },
+    async importFromBackend(kind, key, opts) {
+      const backend = ctx.backends.get(kind)
+      if (!backend) throw new ScenarioSkipped(`后端 ${kind} 未装配`)
+      const available = await backend.available()
+      if (!available) throw new ScenarioSkipped(`后端 ${kind} 当前不可用：${backend.availabilityNote}`)
+      const ref = await backend.getPrinter(key)
+      if (!ref) throw new ScenarioFailure(`后端 ${kind} 中找不到打印机：${key}`)
+      return ctx.printers.importFromBackend(backend, ref, { test: true, shared: opts?.shared ?? false, displayName: opts?.displayName })
+    },
+    mdnsScan() {
+      return ctx.mdns.scan()
+    },
+    mdnsAvailable() {
+      return ctx.mdns.isAvailable()
+    },
+    vippAvailable() {
+      return ctx.vipp !== null
+    },
+    vippJobState(printerId, backendJobId) {
+      if (!ctx.vipp) return null
+      const numeric = Number(backendJobId)
+      if (!Number.isInteger(numeric)) return null
+      return ctx.vipp.jobState(printerId, numeric)
     },
   }
 }

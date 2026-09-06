@@ -1,7 +1,8 @@
 import { Router, headerString, parseJsonBody, readBody, sendError, sendJson } from './router'
 import type { HostContext } from '../host'
 import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
-import { allBackends } from '../backends'
+import type { BackendKind } from '../core/types'
+import { probeSnmpConsumables, snmpHostFromUri } from '../backends/snmp'
 import type { CreatePrinterInput } from '../core/printers'
 import type { PrintOptions } from '../core/types'
 
@@ -46,16 +47,36 @@ export function buildRouter(): Router {
   })
 
   router.get('/api/system/stats', async (ctx, _req, res) => {
-    const [jobs, storage] = await Promise.all([ctx.jobs.stats(), ctx.storage.stats()])
-    const backends = await Promise.all(
-      allBackends().map(async (b) => ({ kind: b.kind, available: await b.available(), note: b.availabilityNote })),
-    )
+    const [jobs, storage, backends] = await Promise.all([ctx.jobs.stats(), ctx.storage.stats(), ctx.backends.availability()])
     sendJson(res, 200, {
       jobs,
       storage,
       printers: ctx.printers.listAll().map((p) => ({ id: p.id, name: p.name, status: p.status, stats: p.stats, shared: p.shared })),
       backends,
     })
+  })
+
+  // ---------------------------------------------------------------- backends（阶段 2）
+
+  router.get('/api/backends', async (ctx, _req, res) => {
+    const backends = await ctx.backends.availability(true)
+    ctx.bus.emit('backend:update', { backends })
+    sendJson(res, 200, { backends })
+  })
+
+  router.get('/api/backends/:kind/printers', async (ctx, _req, res, params) => {
+    const backend = ctx.backends.get(params.kind as BackendKind)
+    if (!backend) return sendError(res, 404, `后端不存在：${params.kind}（可用：${ctx.backends.kinds().join(', ')}）`)
+    const available = await backend.available()
+    let printers: Awaited<ReturnType<typeof backend.listPrinters>> = []
+    if (available) {
+      try {
+        printers = await backend.listPrinters()
+      } catch (err) {
+        return sendError(res, 502, `后端列举失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    sendJson(res, 200, { backend: params.kind, available, note: backend.availabilityNote, printers })
   })
 
   // ---------------------------------------------------------------- discovery
@@ -106,14 +127,125 @@ export function buildRouter(): Router {
     sendJson(res, 200, { printer })
   })
 
-  router.delete('/api/printers/:id', (ctx, _req, res, params) => {
+  router.delete('/api/printers/:id', async (ctx, _req, res, params) => {
     const printer = ctx.printers.get(params.id)
     if (!printer) return sendError(res, 404, `打印机不存在：${params.id}`)
-    if (!printer.virtual) return sendError(res, 400, '仅虚拟打印机可以删除')
+    if (!printer.virtual && printer.backend === 'mock') return sendError(res, 400, '仅虚拟打印机可以删除')
+    // 导入的真实后端打印机（backend !== mock）可以删除；进行中任务先失败化
     ctx.engine.onPrinterRemoved(printer.id)
+    for (const job of ctx.jobs.list({ printerId: printer.id })) {
+      if (job.state === 'processing' || job.state === 'paused') {
+        job.error = '打印机已被移除'
+        ctx.jobs.setState(job, 'failed', '打印机已被移除，任务失败')
+        void ctx.jobs.writeResult(job, 'failed', 'Printer removed')
+      }
+    }
     ctx.printers.remove(printer.id)
     void ctx.jobs.removeJobsWhere((j) => j.printerId === printer.id)
     sendJson(res, 200, { ok: true })
+  })
+
+  // ---------------------------------------------------------------- 真实打印机导入与能力刷新（阶段 2）
+
+  router.post('/api/printers/import', async (ctx, _req, res, _params, _query, body) => {
+    const input = parseJsonBody<{ backend?: string; key?: string; shared?: boolean; displayName?: string; test?: boolean }>(body)
+    if (!input?.backend || !input?.key) return sendError(res, 400, '请求体必须包含 backend 与 key 字段')
+    if (input.backend !== 'ipp' && input.backend !== 'cups' && input.backend !== 'windows') {
+      return sendError(res, 400, 'backend 仅支持 ipp | cups | windows（mock 由内置虚拟打印机提供）')
+    }
+    const backend = ctx.backends.get(input.backend)
+    if (!backend) return sendError(res, 404, `后端未装配：${input.backend}`)
+    const available = await backend.available()
+    if (!available) return sendError(res, 409, `后端 ${input.backend} 当前不可用：${backend.availabilityNote}`)
+    const ref = await backend.getPrinter(String(input.key))
+    if (!ref) return sendError(res, 404, `后端 ${input.backend} 中找不到打印机：${input.key}`)
+    const printer = await ctx.printers.importFromBackend(backend, ref, {
+      shared: input.shared ?? true,
+      displayName: input.displayName ? String(input.displayName).slice(0, 80) : undefined,
+      test: input.test ?? false,
+    })
+    sendJson(res, 201, { printer })
+  })
+
+  router.post('/api/printers/add-uri', async (ctx, _req, res, _params, _query, body) => {
+    const input = parseJsonBody<{ uri?: string; shared?: boolean; displayName?: string }>(body)
+    if (!input?.uri || !/^ipps?:\/\//i.test(String(input.uri))) {
+      return sendError(res, 400, '请求体必须包含 uri 字段（ipps:// 暂不支持，请用 ipp://）')
+    }
+    const backend = ctx.backends.get('ipp')
+    if (!backend) return sendError(res, 404, 'IPP 后端未装配')
+    // 结构化访问 IPPPrinterBackend 的 addUri（避免窄化为接口类型）
+    const ippBackend = backend as { addUri?: (uri: string, displayName?: string) => Promise<{ uri: string; displayName: string }> }
+    if (typeof ippBackend.addUri !== 'function') return sendError(res, 500, 'IPP 后端不支持手动添加 URI')
+    const entry = await ippBackend.addUri(String(input.uri).slice(0, 300), input.displayName ? String(input.displayName).slice(0, 80) : undefined)
+    const ref = {
+      key: entry.uri,
+      displayName: entry.displayName,
+      description: `手动添加的 IPP 打印机（${entry.uri}）`,
+      uri: entry.uri,
+    }
+    const printer = await ctx.printers.importFromBackend(backend, ref, { shared: input.shared ?? true })
+    sendJson(res, 201, { printer, uri: entry.uri })
+  })
+
+  router.post('/api/printers/:id/refresh-capabilities', async (ctx, _req, res, params) => {
+    const printer = ctx.printers.get(params.id)
+    if (!printer) return sendError(res, 404, `打印机不存在：${params.id}`)
+    const backend = ctx.backends.get(printer.backend)
+    if (!backend && printer.backend !== 'mock') return sendError(res, 404, `打印机后端未装配：${printer.backend}`)
+    // 并行探测：后端属性 + SNMP 耗材（失败只记 probe，不影响其它能力）
+    const snmpPromise = (async () => {
+      const host = printer.backendUri ? snmpHostFromUri(printer.backendUri) : null
+      if (!host) return []
+      const result = await probeSnmpConsumables({ host, timeoutMs: 900, retries: 1 })
+      return [{ source: 'SNMP' as const, report: result.report }]
+    })()
+    const report = await ctx.printers.refreshCapabilities(printer, backend ?? null, snmpPromise)
+    sendJson(res, 200, { printer, report })
+  })
+
+  // ---------------------------------------------------------------- Virtual IPP Server 控制（阶段 2）
+
+  router.get('/api/vipp/printers', (ctx, _req, res) => {
+    if (!ctx.vipp) return sendError(res, 409, 'Virtual IPP Server 未启用（OPS_VIPP_ENABLED=0）')
+    sendJson(res, 200, { port: ctx.vipp.port, dataDir: ctx.vipp.dataDir, printers: ctx.vipp.list() })
+  })
+
+  router.post('/api/vipp/printers/:id/condition', async (ctx, _req, res, params, _query, body) => {
+    if (!ctx.vipp) return sendError(res, 409, 'Virtual IPP Server 未启用（OPS_VIPP_ENABLED=0）')
+    const input = parseJsonBody<{ condition?: string; message?: string }>(body)
+    const condition = input?.condition
+    const valid = ['none', 'online', 'media-needed', 'media-jam', 'offline']
+    if (!condition || !valid.includes(condition)) {
+      return sendError(res, 400, `condition 仅支持 ${valid.join(' | ')}`)
+    }
+    const normalized = condition === 'online' ? 'none' : (condition as 'none' | 'media-needed' | 'media-jam' | 'offline')
+    const snapshot = await ctx.vipp.setCondition(params.id, normalized)
+    if (!snapshot) return sendError(res, 404, `vipp 打印机不存在：${params.id}（可用：${ctx.vipp.getPrinterIds().join(', ')}）`)
+    sendJson(res, 200, { ok: true, printer: snapshot, message: input?.message ?? `已注入条件 ${condition}` })
+  })
+
+  router.post('/api/vipp/printers/:id/speed', async (ctx, _req, res, params, _query, body) => {
+    if (!ctx.vipp) return sendError(res, 409, 'Virtual IPP Server 未启用（OPS_VIPP_ENABLED=0）')
+    const input = parseJsonBody<{ ppm?: number }>(body)
+    if (!input?.ppm || Number.isNaN(Number(input.ppm))) return sendError(res, 400, '请求体必须包含 ppm（1–600）')
+    const snapshot = await ctx.vipp.setPpm(params.id, Number(input.ppm))
+    if (!snapshot) return sendError(res, 404, `vipp 打印机不存在：${params.id}`)
+    sendJson(res, 200, { ok: true, printer: snapshot })
+  })
+
+  // ---------------------------------------------------------------- mDNS 发现（阶段 2）
+
+  router.get('/api/discovery/mdns', (ctx, _req, res) => {
+    sendJson(res, 200, { ...ctx.mdns.lastResults(), available: ctx.mdns.isAvailable() })
+  })
+
+  router.post('/api/discovery/mdns/scan', async (ctx, _req, res) => {
+    if (!ctx.mdns.isAvailable()) {
+      return sendJson(res, 200, { printers: [], available: false, note: ctx.mdns.note() || 'mDNS 不可用（组播 socket 未绑定）' })
+    }
+    const printers = await ctx.mdns.scan()
+    sendJson(res, 200, { printers, available: true, note: ctx.mdns.note() })
   })
 
   router.post('/api/printers/:id/test-print', async (ctx, _req, res, params) => {
@@ -181,10 +313,12 @@ export function buildRouter(): Router {
     sendJson(res, 200, { job })
   })
 
-  router.post('/api/jobs/:id/cancel', (ctx, _req, res, params) => {
+  router.post('/api/jobs/:id/cancel', async (ctx, _req, res, params) => {
     const job = ctx.jobs.get(params.id)
     if (!job) return sendError(res, 404, `任务不存在：${params.id}`)
-    const result = ctx.engine.cancelJob(job)
+    const printer = ctx.printers.get(job.printerId)
+    // 真实后端打印机 → 转发到 backend.cancelJob（IPP Cancel-Job）；虚拟打印机 → 引擎取消
+    const result = printer && printer.backend !== 'mock' ? await ctx.runner.cancel(job) : ctx.engine.cancelJob(job)
     if (!result.ok) return sendError(res, 409, result.message)
     sendJson(res, 200, { ok: true, message: result.message })
   })
@@ -282,13 +416,13 @@ export function buildRouter(): Router {
     sendJson(res, 200, { settings: ctx.settings.get() })
   })
 
-  router.patch('/api/settings', (ctx, _req, res, _params, _query, body) => {
+  router.patch('/api/settings', async (ctx, _req, res, _params, _query, body) => {
     const patch = parseJsonBody<{ hostName?: string; securityMode?: 'open' | 'pairing' }>(body)
     if (!patch) return sendError(res, 400, '请求体不是合法 JSON')
     if (patch.securityMode && patch.securityMode !== 'open' && patch.securityMode !== 'pairing') {
       return sendError(res, 400, 'securityMode 仅支持 open | pairing')
     }
-    const settings = ctx.settings.patch({
+    const settings = await ctx.settings.patch({
       hostName: patch.hostName?.slice(0, 80),
       securityMode: patch.securityMode,
     })
@@ -415,7 +549,7 @@ export function buildRouter(): Router {
 
   router.get('/api/tests/runs', async (ctx, _req, res) => {
     const ids = await ctx.storage.listTestRunIds()
-    const runs = []
+    const runs: unknown[] = []
     for (const id of ids.slice(-20).reverse()) {
       const run = await ctx.storage.readJson<unknown>(`test-runs/${id}.json`, null)
       if (run) runs.push(run)
