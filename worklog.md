@@ -311,3 +311,27 @@ Stage Summary:
 - 最大长尾是耗材：读取优先级应固化为 IPP `marker-*` → SNMP `prtMarkerSuppliesLevel`(43.11.1.1.9) → HOST-RESOURCES `hrPrinterDetectedErrorState`(25.3.5.1.2) → 厂商专用（Brother 最友好/消费喷墨最差）；扫描走 eSCL（半标准）；墨盒芯片计数必须 Vendor Adapter；WSD 打印不实现是正确取舍
 - 立即可做的零风险增强（P1 路线，纯标准零厂商知识）：SNMP 补 HOST-RESOURCES 状态位、community 可配置、IPP `printer-state-reasons` 解析 toner-low/ink-low 降级告警、mDNS 识别 `_universal._sub`+`pdl` driverless 判定
 - 文档：/home/z/my-project/docs/VENDOR_PROTOCOLS.md（本任务唯一产物，未触碰任何源码/配置）
+
+---
+Task ID: 4（第二阶段续）
+Agent: main-agent
+Task: 移动端布局根因修复 + 真实打印接入增强 + 完整用户文档（main@b50ac36）
+
+Work Log:
+- 【复现诊断】agent-browser 393px 实测：①导航 tablist scrollWidth=723/clientWidth=361，滚动条隐藏无提示 →"被截断"观感 ②注入 420 字符长日志 → 最近事件 Viewport 内部 scrollWidth=1454（消息 span 无 break 处理）③关键发现：Viewport clientHeight=1804 ≠ max-h-64 的 256 —— Radix ScrollArea Viewport 的 height:100% 在 Root 仅有 max-h（无固定 height）时解析失效，内容全部展开 → 溢出卡片覆盖相邻组件 = 用户"日志覆盖快速开始"的确切根因
+- 【根因修复 1】overview 最近事件消息 span 补 min-w-0/flex-1/break-all + items-baseline；实测注入后 Viewport 内部溢出 1454→0
+- 【根因修复 2】widgets.tsx 新增 FadingScrollArea 组件：flex-col + [&>[data-slot=scroll-area-viewport]]:min-h-0 + overflow-y-auto 让 Viewport 在 max-h 内收缩滚动；附底部渐变+"↓ 滚动查看"提示（Radix 移动端 scrollbar-width:none 无任何滚动提示）、滚动到底自动渐隐、ResizeObserver 监听内容增长；应用到概览最近事件/进行中任务/事件日志/队列表格 4 处
+- 【根因修复 3】ops-app 导航横滚两侧动态渐变（scroll+ResizeObserver，scrollLeft 位置感知），tab 补 whitespace-nowrap；实测 0px→200 滚动后左渐变出现
+- 【QA】9 tab × [320/393/1280] 全 0px 横向溢出；注入超长日志后 Viewport 256px 独立滚动 + 无组件重叠（几何检测）+ Sheet 弹窗 393px 视口内且可滚动；卡片重叠检测 0；lint 0 error；dev.log clean
+- 【真实打印接入核查】cups.ts（lpstat/lp/cancel + ipp://localhost:631 双路径）与 windows.ts（PowerShell Get-Printer/Win32_Printer/PrintTo/Get-PrintJob/Remove-PrintJob，墨量 UNKNOWN 不猜测）实现完备确认
+- 【子代理 P5 厂商协议研究】docs/VENDOR_PROTOCOLS.md：IPP Everywhere/Mopria/AirPrint 生态、9+ 厂商对比表、能力可替代性判定、Vendor Adapter 路线图；结论：标准五通道（CUPS+IPP+Windows+SNMP+mDNS）覆盖约 90% 常见需求，缺口在耗材长尾与扫描
+- 【P1 标准协议增强】①capabilities.ts statusFromPrinterAttributes 识别 toner/ink/marker-supply low|empty 告警附加到 message（不改 status 不猜百分比）②backends-view mDNS 发现列表 driverless 徽章（TXT pdl 含 application/pdf → IPP Everywhere 免驱，VIPP 实测 4/4 显示）
+- 【文档】docs/USAGE.md（Host 8 步/Client 10 步/原生打印 vs OPS 场景对照/8 项故障排查/能力真实性声明）；README v0.3.0 badge + 新用户引导 + Roadmap 13 更新
+- 【回归】Host 重启后 14/14 自测通过（tr-mtpmv8rx-1360）；git b50ac36 推送 main；cron 持续迭代任务重建（旧 363074 删 → 新 363203，fixed_rate 900s）
+
+Stage Summary:
+- 用户反馈的 4 类移动端问题全部定位到真实根因并修复（非 overflow:hidden 掩盖）：Radix Viewport height:100% 失效 / 消息 span 不换行 / 隐藏滚动条无提示 / 导航无滚动指示
+- 真实打印接入：架构核查通过 + 厂商研究完成 + 2 项 P1 增强（耗材告警/driverless 识别）
+- 交付物：main@b50ac36（11 文件，+627/-42）、docs/USAGE.md、docs/VENDOR_PROTOCOLS.md
+- 未验证项（需真实硬件）：CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS
+- 下一阶段优先级（见 VENDOR_PROTOCOLS.md P1 清单）：①SNMP hrPrinterDetectedErrorState + community 可配置 ②ipps:// TLS ③Host 控制台鉴权 ④Android/iOS 原生化（NsdManager 发现）
