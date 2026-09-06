@@ -402,3 +402,26 @@ Stage Summary:
 - 真实扫描仪（各品牌 eSCL 差异：双面/DFE/PDF 直出）待硬件验证；PDF 合成、双面扫描留后续
 - 项目状态：稳定（16/16、lint 0、零溢出）
 - 下一阶段建议：①扫描 PDF 合成（多页 PNG → application/pdf 输出）②Host 控制台鉴权（访问口令 + API token）③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Android/iOS 原生化（NsdManager + 扫描 UI）⑤真实硬件验证
+
+---
+Task ID: 8（cron 迭代轮）
+Agent: main-agent
+Task: 开工 QA 基线核查 + P3.5 扫描 PDF 按需导出（v0.3.3）
+
+Work Log:
+- 开工核查：worklog 上轮建议（扫描 PDF 合成为首选）；6 端口全监听（3000/3001/3002/3061/3063/3065）、git 干净（6357dd8）、v0.3.2 基线
+- 【QA 基线】agent-browser 经 :81：10 tab × [默认/393px] 全 0 横向溢出、0 console error；扫描 E2E（提交→完成→图像 850px 真实加载→清理）；自测 16/16 全 pass（tr-mtptbzvg，45s）+ 零残留 → 项目稳定，无 bug 需修复，按用户指令推进新需求
+- 【后端 PDF 导出 5 文件】①core/types：ScanJobPdfExport（exportedAt/pages/bytes/durationMs）+ ScanJob.pdf 可空字段 ②core/scan.ts：exportJobPdf（仅 completed 可导出；pdf-lib embedPng 逐页嵌入；A4 595.28x841.89 等比适配居中 18pt 边距；每页独立横竖判定——横图自动横向 A4；document.pdf 落盘 + job.pdf 元数据 + scan:update 广播 + 事件日志；幂等：元数据+文件双在则直接复用不重复合成）+ getJobPdfBytes ③routes：POST /api/scan/jobs/:id/export-pdf（400/404 语义错误码）+ GET /api/scan/jobs/:id/pdf（application/pdf attachment 直写）④removeJob 目录级删除天然覆盖 PDF 清理 ⑤load() 恢复兼容（pdf 元数据随 job.json 持久化）
+- 【自测场景 17】scan-pdf-export：vscan-adf Feeder 2 页扫描 → 导出前 pdf 为空断言 → 导出后元数据（2 页/12856 bytes/171ms）→ 字节级校验（%PDF-1.7 魔数 + pdf-lib load 解析页数=2 + A4 595.3x841.9pt）→ 幂等复用（exportedAt 不变）→ 取消状态任务导出应报错（ScenarioFailure 容错）；ScenarioApi 新增 exportScanPdf/scanPdfBytes；scenarios.ts ScenarioId 联合类型 + 注释清单同步
+- 【前端 5 文件】types：ScanJobPdfExport 对齐；client：exportScanPdf + scanPdfUrl（网关/直连双模式）；store：exportScanPdf action（applyScanJob 更新）；scan-view：任务卡 completed 状态「导出 PDF」（FileText 图标+loading 转圈）→ 导出成功切换「下载 PDF」+ emerald 边框 PDF 信息行（页数 · KB · A4 · 导出时间）+ toast（页数/大小）；参数卡输出说明升级（PNG 页 + 可导出 PDF · 横图自动转横向页）；formatBytes 工具函数
+- 【顺手修复】debug-view 两处过时静态文案：「10 个场景顺序执行」→ 动态 scenarios.length；覆盖清单补全（IPP 全链路/能力未知/取消/mDNS/ipps/eSCL/PDF 导出/自动清理说明）
+- 【文档 + 版本】USAGE.md：使用流程第 5 步「导出 PDF」+ 排查表新增导出报错行 + 如实声明改写（按需导出 PDF、pdf-lib 嵌入不重编码、不含 OCR 文本层）；README：特性 bullet + 17 场景 + Roadmap 12（PDF ✔ v0.3.3）；版本 0.3.2 → 0.3.3（前后端 OPS_VERSION + host package.json）
+- 【验收】curl 链路（未导出 404 → 导出 200 元数据 → 下载 %PDF-1.7 → 幂等 exportedAt 不变 → 非完成态 400 → 不存在 404）；Host 重启 v0.3.3；全量 17/17（tr-mtptnngh，含场景 17 全断言绿）+ 零残留；agent-browser E2E ×2（扫描→导出→UI 状态流转→网关 fetch PDF 200/6576 bytes→清理）；10 tab × [393/1280] 零溢出 0 console error；header 版本 v0.3.3；lint 0 error
+- git f235a60 推送 main（14 文件 +347/-20）
+
+Stage Summary:
+- 交付：扫描 PDF 按需导出全链路（后端 A4 合成引擎 + 幂等缓存 + 2 条 REST 路由 + 前端导出/下载状态流转 UI + 自测场景 17）——上一轮明确留的「PDF 合成留后续」TODO 完成；扫描→PDF 归档工作流闭环
+- 设计要点：横图自动横向 A4（混合方向任务正确排版）；幂等双条件（元数据+文件）；PDF 无 OCR 文本层（如实声明，不夸大能力）
+- 项目状态：稳定（17/17、lint 0、零溢出、双视图全绿）
+- 已知风险/未验证：真实 eSCL 扫描仪的 PDF 导出效果（大页数/高 dpi 下 embedPng 性能）待硬件验证；opscan tsc 既有噪音（TS2367 窄化守卫等）为历史遗留，非本轮引入，不影响运行
+- 下一阶段优先建议：①eSCL Duplex 双面扫描（vscan Feeder 扩展 4 页正反 + eSCL 双面参数探测）②Host 控制台鉴权（访问口令 + API token，局域网暴露面收窄）③扫描亮度/对比度参数（eSCL setting 支持时透传）④P4 Brother PJL over 9100 试点（首个 Vendor Adapter）⑤Android/iOS 原生化（NsdManager + 扫描 UI + PDF 保存到相册/文件）
