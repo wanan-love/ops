@@ -255,3 +255,42 @@ Stage Summary:
 - 打包原则达成：用户下载→双击→启动→浏览器 http://localhost:3001/ 即用；Bun 运行时 + Web 控制台全部内嵌单文件，无需 Node/Python/Rust/Java
 - 待真实环境验证：Windows exe 实际运行（CI/用户机器）、macOS .app/.dmg（CI macos runner）、Android APK（CI）、MSI（CI WiX）、跨主机 mDNS、CUPS/Windows 后端宿主
 - 风险：release-build.yml 推送可能仍受 PAT Workflows 权限限制（同第一阶段问题）——若失败则本地产物直接上传 Release 资产
+
+---
+Task ID: 3-c（CI 迭代修复）
+Agent: main-agent
+Task: v0.3.0 发布迭代（Release 资产上传 + CI 三次修复）
+
+Work Log:
+- GitHub 发布：commit 2a9f571（v0.3.0 主提交）+ a823ce3/9758b6b/3fab84e（CI 修复）；**workflow 文件推送成功（PAT Workflows 权限问题已解决）**——docker.yml 也首次触发成功（ghcr.io/wanan-love/ops 镜像已构建）
+- Release v0.3.0 创建（id 383516928）+ 本地实测产物 7 个资产直接上传（Linux .deb 25M/.AppImage 33M/单文件 93M、Windows exe 97M/zip 37M、macOS arm64 64M/x64 69M）
+- CI 第一轮失败定位与修复（3 处真实根因）：
+  ① build-windows：Windows runner git-bash 无 zip 命令 → build-windows.sh 三级兜底（zip → bsdtar tar -a -cf *.zip → pwsh Compress-Archive）
+  ② build-macos：BSD grep 不支持 -oP（build-common.sh version() 报错 exit 2）→ 改 POSIX sed；本地回归发现 sed 行首锚定 bug（export const 前缀）二次修复
+  ③ build-ios：xcodebuild "Supported platforms empty" + 无 scheme → pbxproj 补 SDKROOT/SUPPORTED_PLATFORMS + xcshareddata/xcschemes/OpenPrintShare.xcscheme（BuildableReference BlueprintIdentifier=A10000000000000000000040）
+- workflow YAML 校验：步骤名含冒号未加引号导致整份 workflow 校验失败（首次 push tag 无 job 创建）→ 引号修复 + 本地 python yaml 校验通过
+- tag 三次重推（delete + re-push 触发重跑）：v0.3.0 → CI 第 3 轮运行中（第一轮 android/linux 成功，windows/macos/ios 失败已修复）
+
+Stage Summary:
+- 已发布：GitHub main@3fab84e、tag v0.3.0、Release https://github.com/wanan-love/ops/releases/tag/v0.3.0（7 资产）+ ghcr.io 镜像 ✓
+- CI 经验沉淀：YAML 步骤名冒号、跨平台 shell 兼容（BSD grep/无 zip）、Xcode scheme 必须显式创建
+- 待观察：第 3 轮 CI 五平台结果（若仍有失败，按日志继续修复，资产已有本地兜底上传）
+
+---
+Task ID: 3-final（收尾）
+Agent: main-agent
+Task: v0.3.0 CI 全绿 + Release 13 产物交付 + 最终验收
+
+Work Log:
+- CI 修复迭代共 7 轮 tag 重推，全部根因修复：①YAML 步骤名冒号 ②Windows git-bash 无 zip（bsdtar/Compress-Archive 兜底）③BSD grep -oP → POSIX sed（含行首锚定二次修复）④WiX v7 OSMF EULA → v6 ⑤wxs XML 注释含 -- ⑥CustomAction 需 Directory 属性 ⑦Codepage 1252 无法存中文 → 65001/2052 ⑧iOS pbxproj 显式 App.swift 引用与 FileSystemSynchronizedRootGroup 冲突（同步组自动编译）
+- 第 7 轮 CI 全绿：build-linux/windows/macos/android/ios + release 全部 success
+- Release v0.3.0 最终 13 个正式产物（清理 xcarchive 散文件后）：Android APK / Linux x64+arm64 二进制+deb / Linux x64 AppImage / macOS arm64+x64 二进制+DMG / Windows exe+MSI+zip——命名统一 OpenPrintShare-{Platform}-{arch}-0.3.0{.ext}
+- docker workflow 同步首次触发成功：ghcr.io/wanan-love/ops 镜像已构建（第一阶段 PAT workflow 权限问题随本次 workflow 推送成功一并解决）
+- cron 定时任务刷新为 v0.3.0 状态（旧 job 363003 删除，新 job 363074，fixed_rate 900s）
+- 最终验收：lint 0 error 0 warning；:3000/:3001/:3002/:3061 全监听；REST 根端点 200；后端 mock/ipp 可用（cups/windows 本环境预期不可用）；dev.log 无异常
+
+Stage Summary:
+- v0.3.0 完整交付：代码 main@8c64b45 + tag v0.3.0 + Release 13 产物（https://github.com/wanan-love/ops/releases/tag/v0.3.0）+ ghcr 镜像 + CI 自动化
+- 用户链路达成：下载 → 双击 → 启动 → 浏览器 http://localhost:3001/ 即用（运行时内嵌单文件）
+- 本地实测：单文件/AppImage/CLI ✓；CI 产出：MSI/DMG/APK/iOS archive ✓（构建成功，功能待用户环境验证）
+- 下一阶段建议：①真实硬件验证（Windows 宿主跑 exe+WindowsPrinterBackend、macOS 跑 dmg+CUPS、SNMP 墨量、跨主机 mDNS）②ipps:// TLS ③Host 控制台鉴权 ④Android/iOS 原生化（NsdManager 发现、原生 UI）⑤厂商专用能力研究
