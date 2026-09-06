@@ -29,7 +29,8 @@ export type CapabilitySource =
 /**
  * 能力四元组：value + state + source + timestamp。
  * state=unknown 时 value 必为 null（读取不到 ≠ 不支持，禁止精测）。
- * detail 记录来源细节（IPP 属性名 / 探测错误原因）。
+ * 合法形态「supported + value=null」= 确认支持但具体值不可获取（如 WMI 只报告「支持双面」
+ * 但不区分长边/短边翻转模式）——此时 detail 必须写明不可获取的原因，UI 显示 SUPPORTED + 值 UNKNOWN。
  */
 export interface Capability<T> {
   value: T | null
@@ -151,6 +152,8 @@ export interface Printer {
   stats: PrinterStats
   /** Self-Test 场景创建的隔离打印机 */
   test?: boolean
+  /** 系统默认打印机标记（Windows Win32_Printer.Default / CUPS lpstat -d；后端枚举时刷新，无法获取时缺省） */
+  isSystemDefault?: boolean
   /** 后端内的打印机标识（CUPS queue 名 / vipp printer id / 手动添加的 URI） */
   backendKey?: string
   /** 后端打印机 URI（如 ipp://localhost:3061/printers/vipp-full） */
@@ -352,6 +355,16 @@ export interface HostInfo {
   restPort: number
   wsPort: number
   dataDir: string
+  /** 开发/测试模式（OPS_DEV_MODE=1）：虚拟打印机与 vipp/vscan/vpjl 仅在此模式启用；正式运行恒为 false */
+  devMode?: boolean
+  /** 运行时平台检测明细（信号链 + os 运行时版本；真实性红线：动态检测，非编译期固定值） */
+  platformRuntime?: {
+    platform: 'windows' | 'macos' | 'linux'
+    signals: string[]
+    release: string
+    version: string
+    type: string
+  }
   /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
   vippTlsPort?: number | null
   /** Virtual eSCL Scanner 端口（null = 未启用；开发/测试用） */

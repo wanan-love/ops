@@ -32,6 +32,14 @@ export interface BackendPrinterRef {
   location?: string
   uri?: string
   makeAndModel?: string
+  /** 系统默认打印机（Windows Win32_Printer.Default / CUPS lpstat -d；读取不到时缺省 = 不猜测） */
+  isDefault?: boolean
+  /** 枚举时读到的驱动名（真实字段，读取不到时缺省） */
+  driverName?: string
+  /** 枚举时读到的端口名（真实字段，读取不到时缺省） */
+  portName?: string
+  /** 枚举时读到的状态文本（真实字段原始值，读取不到时缺省） */
+  statusHint?: string
 }
 
 /** 后端任务提交请求 */
@@ -54,7 +62,7 @@ export interface BackendJobStatus {
 
 export interface PrinterBackend {
   kind: BackendKind
-  /** 不可用时的解释（显示在 Host 控制台 /api/backends） */
+  /** 不可用时的解释（显示在 Host 控制台 /api/backends；实现为 getter 时在访问时动态求值，禁止烘焙开发环境信息） */
   readonly availabilityNote: string
   available(): Promise<boolean>
   listPrinters(): Promise<BackendPrinterRef[]>
@@ -77,7 +85,9 @@ export interface PrinterBackend {
  */
 export class MockPrinterBackend implements PrinterBackend {
   readonly kind: BackendKind = 'mock'
-  readonly availabilityNote = 'Virtual Printer 模拟后端：接收 PDF 并模拟完整打印流程（FIFO/ppm 推进/条件注入/墨耗），无需物理设备，始终可用'
+  /** 开发/测试专用后端：仅 OPS_DEV_MODE=1 时才被注册进 BackendManager（正式运行不存在本后端） */
+  readonly availabilityNote =
+    'Virtual Printer 模拟后端（开发/测试专用，OPS_DEV_MODE=1 才注册）：接收 PDF 并模拟完整打印流程（FIFO/ppm 推进/条件注入/墨耗），无需物理设备——正式运行环境不包含本后端与任何虚拟打印机'
 
   constructor(
     private readonly printers: PrinterRegistry,
@@ -226,12 +236,12 @@ export class BackendManager {
     return this.availCache
   }
 
-  /** 主后端：可用后端里优先 ipp/cups/windows，否则 mock（HostInfo.backend 兼容字段） */
-  primaryBackend(avail: BackendAvailability[]): BackendKind {
-    for (const kind of ['ipp', 'cups', 'windows'] as BackendKind[]) {
+  /** 主后端：可用后端里优先 ipp/cups/windows；无任何可用后端时返回 'none'（正式模式不回退 mock——无后端可用是真实状态，不伪造） */
+  primaryBackend(avail: BackendAvailability[]): BackendKind | 'none' {
+    for (const kind of ['windows', 'cups', 'ipp'] as BackendKind[]) {
       if (avail.some((a) => a.kind === kind && a.available)) return kind
     }
-    return 'mock'
+    return 'none'
   }
 
   invalidateCache(): void {

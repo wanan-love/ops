@@ -84,7 +84,31 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             <Row label="主机名" value={hostInfo?.hostName ?? '—'} />
             <Row label="Host ID" value={hostInfo ? hostInfo.hostId.slice(0, 13) + '…' : '—'} mono />
             <Row label="版本" value={`v${hostInfo?.version ?? '—'} · OPS/${hostInfo?.apiVersion ?? '—'}`} />
-            <Row label="平台" value={hostInfo?.platform ?? '—'} />
+            <Row
+              label="平台"
+              value={
+                hostInfo
+                  ? `${hostInfo.platform}${hostInfo.platformRuntime?.version ? `（${hostInfo.platformRuntime.version.slice(0, 40)}）` : ''}`
+                  : '—'
+              }
+            />
+            {hostInfo?.platformRuntime && (
+              <div className="rounded-md bg-muted/60 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground/80">运行时检测信号：</span>
+                {hostInfo.platformRuntime.signals.join('；')}
+                {hostInfo.platformRuntime.release ? `（release=${hostInfo.platformRuntime.release.slice(0, 32)}）` : ''}
+              </div>
+            )}
+            <Row
+              label="运行模式"
+              value={
+                hostInfo?.devMode
+                  ? '开发/测试（虚拟设备已启用）'
+                  : hostInfo
+                    ? '正式（系统真实打印机，无虚拟设备）'
+                    : '—'
+              }
+            />
             <Row label="运行时长" value={hostInfo ? formatUptime(hostInfo.uptimeSec + uptime) : '—'} mono />
             <Row label="安全模式" value={hostInfo?.securityMode === 'pairing' ? '配对（需令牌）' : '开放（局域网信任）'} />
             <Row
@@ -92,7 +116,7 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
               value={
                 hostInfo?.backends && hostInfo.backends.length > 0
                   ? `${hostInfo.backends.map((b) => BACKEND_LABEL[b] ?? b).join(' + ')}（统一 PrinterBackend 接口）`
-                  : 'MockPrinterBackend（Virtual Printer）'
+                  : '—'
               }
             />
           </CardContent>

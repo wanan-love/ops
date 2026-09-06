@@ -46,8 +46,15 @@ Host 是**连接打印机的那台设备**（如办公室的 PC / Mac / 服务�
 命令行参数（可选，所有平台一致）：
 
 ```bash
-openprintshare [--port 3001] [--ws-port 3002] [--data-dir <目录>] [--web <目录>] [--no-vipp] [--version]
+openprintshare [--port 3001] [--ws-port 3002] [--data-dir <目录>] [--web <目录>] [--dev] [--version]
 ```
+
+> **运行模式（v0.4.3 起产品红线）**：正式产物默认以**正式模式**运行——只包含真实打印后端
+> （Windows 打印栈 / CUPS / IPP 直连），**不包含任何虚拟打印机或仿真设备**；启动时与每 60 秒
+> 自动同步一次系统真实打印机（也可在「打印后端」页手动点「同步系统打印机」）。
+> 开发/测试模式（`--dev` 或 `OPS_DEV_MODE=1`）才会启用虚拟打印机与 Virtual IPP/Scanner/PJL
+> 仿真设备，且仅限开发调试用途——正式部署不需要也不应该开启。
+> 平台信息由**运行时多信号动态检测**（概览页可见信号链），不使用开发/编译环境固定值。
 
 ### 3. 添加 / 发现打印机
 
@@ -56,9 +63,11 @@ openprintshare [--port 3001] [--ws-port 3002] [--data-dir <目录>] [--web <目�
 1. **mDNS 扫描（推荐）**：点击「扫描 _ipp._tcp」，自动发现局域网中支持 IPP 的网络打印机（含 IPP Everywhere / AirPrint 机型），点「添加」即可。
 2. **手动 URI**：已知打印机地址时填写 IPP URI（如 `ipp://192.168.1.50/ipp/print`），点「添加并探测」。
 3. **系统打印机（CUPS / Windows）**：
-   - macOS / Linux：Host 会读取 CUPS 队列（`lpstat` 枚举 + `ipp://localhost:631` 能力探测）；
-   - Windows：Host 会通过系统打印栈枚举（`Get-Printer`）。
-   - 在「打印后端」页确认 CUPS/Windows 后端状态为「可用」后，系统打印机即可被共享。
+   - macOS / Linux：Host 会读取 CUPS 队列（`lpstat` 枚举含系统默认队列 + `ipp://localhost:631` 能力探测）；
+   - Windows：Host 通过 `Win32_Printer` 枚举系统已安装的真实打印机（名称/默认/状态/驱动/端口；
+     状态含 `DetectedErrorState` 官方错误码：无纸/卡纸/门开/离线等）。
+   - 系统打印机由 Host **自动发现并导入**（启动即同步 + 每 60 秒周期同步，幂等去重），无需手动操作；
+     也可在「打印后端」页点「同步系统打印机」立即触发。导入后的卡片会带「系统默认」徽章（如系统设有默认打印机）。
 
 添加成功后，打印机会出现在「打印机」页，并**自动完成一次真实能力探测**（IPP Get-Printer-Attributes + SNMP 耗材探测，多来源并行）。
 

@@ -5,6 +5,7 @@ import type { BackendKind, CapabilityReport, PrintOptions, PrinterStatus } from 
 import type { BackendJobStatus, BackendPrinterRef, PrinterBackend, SubmitJobRequest } from './index'
 import { IppClient } from './ipp/client'
 import { reportFromPrinterAttributes, reportFromError, statusFromPrinterAttributes } from './ipp/capabilities'
+import { detectRuntimePlatform, platformLabel } from '../core/runtime'
 
 /**
  * CupsPrinterBackend — CUPS 后端（macOS / Linux 桌面与服务器）。
@@ -17,7 +18,7 @@ import { reportFromPrinterAttributes, reportFromError, statusFromPrinterAttribut
  *  - 取消：cancel <job-id>（精确，不用 cancel -a 粗暴清队列）
  *
  * 全部命令 8s 超时；命令不存在 → 优雅 unavailable。
- * 当前沙箱无 CUPS 守护进程、无 lp/lpstat → available() = false。
+ * availabilityNote 为 getter —— 访问时按运行时检测平台 + 探测状态生成，禁止烘焙开发/沙箱环境信息。
  */
 
 const CUPS_TIMEOUT_MS = 8000
@@ -70,14 +71,14 @@ export async function commandExists(command: string): Promise<boolean> {
 }
 
 /** lpstat -p -l 输出解析 */
-export function parseLpstatPrinters(output: string): BackendPrinterRef[] {
+export function parseLpstatPrinters(output: string, defaultQueue?: string | null): BackendPrinterRef[] {
   const refs: BackendPrinterRef[] = []
   const lines = output.split('\n')
   let current: { key: string; description: string; location: string } | null = null
   for (const line of lines) {
     const printerMatch = /^printer\s+(\S+)\s+is\s+(\S+)/.exec(line)
     if (printerMatch) {
-      if (current) refs.push(finishRef(current))
+      if (current) refs.push(finishRef(current, defaultQueue))
       current = { key: printerMatch[1]!, description: '', location: '' }
       continue
     }
@@ -96,11 +97,17 @@ export function parseLpstatPrinters(output: string): BackendPrinterRef[] {
       if (form) continue
     }
   }
-  if (current) refs.push(finishRef(current))
+  if (current) refs.push(finishRef(current, defaultQueue))
   return refs
 }
 
-function finishRef(current: { key: string; description: string; location: string }): BackendPrinterRef {
+/** lpstat -d 输出解析：`system default destination: X` / `no system default destination`（真实字段） */
+export function parseLpstatDefault(output: string): string | null {
+  const m = /system default destination:\s*(\S+)/.exec(output)
+  return m?.[1] ?? null
+}
+
+function finishRef(current: { key: string; description: string; location: string }, defaultQueue?: string | null): BackendPrinterRef {
   return {
     key: current.key,
     displayName: current.key,
@@ -108,6 +115,9 @@ function finishRef(current: { key: string; description: string; location: string
     location: current.location,
     uri: `ipp://localhost:631/printers/${current.key}`,
     makeAndModel: 'CUPS Queue',
+    // lpstat -d 读到系统默认队列时标记（读取不到 = null → 缺省不猜测）
+    isDefault: defaultQueue ? current.key === defaultQueue : undefined,
+    statusHint: defaultQueue === current.key ? 'system default destination' : undefined,
   }
 }
 
@@ -134,8 +144,23 @@ export interface CupsBackendOptions {
 
 export class CupsPrinterBackend implements PrinterBackend {
   readonly kind: BackendKind = 'cups'
-  readonly availabilityNote =
-    'CUPS/IPP 后端：需本机运行 CUPS 守护进程（macOS / Linux 桌面与服务器）。探测方式：ipp://localhost:631 + lpstat 命令；当前沙箱环境无 CUPS 守护进程、无 lp/lpstat 工具 → 不可用'
+
+  /**
+   * 动态可用性说明（getter —— 访问时按运行时检测平台 + 探测状态生成，不烘焙任何开发/沙箱环境信息）。
+   * 环境事实（如「无 CUPS 守护进程」）由 available() 探测结果决定，而非固定文案。
+   */
+  get availabilityNote(): string {
+    const p = detectRuntimePlatform()
+    const probes: string[] = []
+    if (this.availabilityCache === true) probes.push('已探测到 CUPS（ipp://localhost:631 可达或 lp/lpstat 可用）')
+    else if (this.availabilityCache === false) probes.push('探测未通过（无 CUPS 守护进程或无 lp/lpstat 命令）')
+    else probes.push('尚未探测（available() 调用后更新）')
+    return [
+      'CUPS/IPP 后端：需本机运行 CUPS 守护进程（macOS / Linux 桌面与服务器）。探测方式：ipp://localhost:631 Get-Printer-Attributes + which lpstat/lp。',
+      `当前运行平台（运行时检测）：${platformLabel(p)}。探测状态：${probes.join('；')}。`,
+      '枚举经 lpstat -p -l -d（含系统默认队列标记）；能力经 CUPS IPP 属性（真实协议数据）。',
+    ].join('')
+  }
 
   private readonly cupsUri: string
   private readonly tmpDir: string
@@ -169,7 +194,8 @@ export class CupsPrinterBackend implements PrinterBackend {
     if (this.lpstatAvailable) {
       const res = await runCmd('lpstat', ['-p', '-l', '-d'])
       if (res.ok) {
-        const refs = parseLpstatPrinters(res.stdout)
+        // -d 输出含系统默认队列（真实字段；无默认时为 null）
+        const refs = parseLpstatPrinters(res.stdout, parseLpstatDefault(res.stdout))
         if (refs.length > 0) return refs
       }
     }

@@ -4,19 +4,24 @@ import { createOpsHost } from './src/host'
 import { createRestServer } from './src/http/server'
 import { attachRealtime } from './src/ws/realtime'
 import { OPS_VERSION } from './src/core/types'
+import { detectRuntimePlatform, platformLabel, runtimePlatformDetail } from './src/core/runtime'
 
 /**
  * OpenPrintShare Host 守护进程（独立 Bun 服务；打包产物为单文件可执行）
  *
  *  REST     : 3001   （OPS/1.0 协议，网关 ?XTransformPort=3001）
  *  Realtime : 3002   （socket.io，path '/'，网关 ?XTransformPort=3002）
- *  Virtual IPP Server : 3061 （开发/测试用 IPP 模拟服务，OPS_VIPP_ENABLED=0 可关）
  *  Web 控制台 : 打包模式随包分发（--web <dir> 或内嵌资产），由 REST 端口直接服务
  *  数据目录 : ./data/mock-printer（--data-dir / OPS_DATA_DIR 可覆盖；打包产物由启动器设置）
  *
+ * ⚠️ 运行模式（虚拟设备与正式产品隔离红线）：
+ *  正式模式（默认）：不注册 Mock 后端、不种虚拟打印机、不启动 vipp/vscan/vpjl；
+ *                    系统真实打印机（Windows 打印栈 / CUPS）自动发现并导入。
+ *  开发/测试模式：--dev 或 OPS_DEV_MODE=1（虚拟打印机 + Virtual IPP/Scanner/PJL 仿真启用）。
+ *
  * CLI（打包产物主要入口）：
- *   ops-host [--port 3001] [--ws-port 3002] [--data-dir <dir>] [--web <dir>] [--no-vipp] [--version]
- * 环境变量等价：OPS_PORT / OPS_WS_PORT / OPS_DATA_DIR / OPS_WEB_DIR / OPS_VIPP_ENABLED
+ *   ops-host [--port 3001] [--ws-port 3002] [--data-dir <dir>] [--web <dir>] [--dev] [--version]
+ * 环境变量等价：OPS_PORT / OPS_WS_PORT / OPS_DATA_DIR / OPS_WEB_DIR / OPS_DEV_MODE
  */
 
 const version = (): string => OPS_VERSION
@@ -27,6 +32,7 @@ interface CliArgs {
   dataDir: string
   webDir: string | null
   noVipp: boolean
+  devMode: boolean
 }
 
 function parseCli(): CliArgs {
@@ -52,7 +58,7 @@ function parseCli(): CliArgs {
   --ws-port <n>     WebSocket 端口（默认 REST+1，OPS_WS_PORT）
   --data-dir <dir>  数据目录（默认 ./data/mock-printer，OPS_DATA_DIR）
   --web <dir>       Web 控制台静态目录（打包模式，OPS_WEB_DIR）
-  --no-vipp         关闭开发/测试用 Virtual IPP Server（OPS_VIPP_ENABLED=0）
+  --dev             开发/测试模式（启用虚拟打印机与仿真设备；等价 OPS_DEV_MODE=1）
   --version         版本号
   --help            本帮助
 `)
@@ -65,11 +71,15 @@ function parseCli(): CliArgs {
   const webDir = webDirRaw && existsSync(resolve(webDirRaw)) ? resolve(webDirRaw) : null
   const noVipp = argv.includes('--no-vipp') || process.env.OPS_VIPP_ENABLED === '0'
   if (noVipp) process.env.OPS_VIPP_ENABLED = '0'
-  return { port, wsPort, dataDir, webDir, noVipp }
+  // 开发/测试模式：--dev 显式开启（或 OPS_DEV_MODE=1）；正式产物默认正式模式
+  const devMode = argv.includes('--dev') || process.env.OPS_DEV_MODE === '1'
+  if (devMode) process.env.OPS_DEV_MODE = '1'
+  return { port, wsPort, dataDir, webDir, noVipp, devMode }
 }
 
 function printBanner(args: CliArgs): void {
   const line = (s: string): void => process.stdout.write(`${s}\n`)
+  const runtime = runtimePlatformDetail()
   line('')
   line('  ┌─────────────────────────────────────────────────────┐')
   line('  │            OpenPrintShare Host                      │')
@@ -81,6 +91,13 @@ function printBanner(args: CliArgs): void {
   }
   line(`  ▸ REST API :   http://localhost:${args.port}/  (OPS/1.0)`)
   line(`  ▸ Realtime :   http://localhost:${args.wsPort}/  (WebSocket)`)
+  // 平台信息由运行时多信号动态检测（绝不使用开发/编译环境固定值）
+  line(`  ▸ 运行平台 :   ${platformLabel(detectRuntimePlatform())}${runtime.version ? `（${runtime.version}）` : ''}${runtime.release ? ` release=${runtime.release}` : ''} — 运行时检测`)
+  line(
+    args.devMode
+      ? '  ▸ 运行模式 :   开发/测试（--dev / OPS_DEV_MODE=1：虚拟打印机 + vipp/vscan/vpjl 仿真启用）'
+      : '  ▸ 运行模式 :   正式（系统真实打印机自动发现；无任何虚拟设备）',
+  )
   line(`  ▸ 数据目录 :   ${args.dataDir}`)
   line('')
 }

@@ -23,6 +23,8 @@ export interface ImportFromBackendOptions {
   displayName?: string
   /** Self-Test 场景导入的隔离打印机（clear-test-data 清理） */
   test?: boolean
+  /** 保留既有 isSystemDefault（默认 false：以本次枚举的实际值为准） */
+  keepSystemDefault?: boolean
 }
 
 /** 后端 kind → 能力报告默认来源 */
@@ -64,13 +66,19 @@ export class PrinterRegistry {
     const stored = await this.storage.readJson<Printer[]>(REL, [])
     if (stored.length > 0) {
       this.printers = new Map(stored.map((p) => [p.id, p]))
-    } else {
-      this.seed()
-      await this.persistNow()
     }
+    // 种子虚拟打印机仅开发模式创建（OPS_DEV_MODE=1；正式运行环境不创建/不显示任何虚拟打印机）
   }
 
-  /** MVP 种子：三台 Virtual Printer（两台已共享 + 一台未共享，演示共享开关） */
+  /** 开发模式 MVP 种子：三台 Virtual Printer（两台已共享 + 一台未共享，演示共享开关）。
+   *  仅 loadFromDevMode() 调用 —— host.ts 在 OPS_DEV_MODE=1 且无既有数据时执行；正式运行永不触达。 */
+  loadFromDevMode(): void {
+    if (this.printers.size > 0) return
+    this.seed()
+    void this.persistNow()
+  }
+
+  /** MVP 种子：三台 Virtual Printer（MockPrinterBackend 设备档案；仅开发/测试模式） */
   private seed(): void {
     const mk = (id: string, name: string, description: string, location: string, caps: Partial<PrinterCapabilities>, shared: boolean): Printer => ({
       id,
@@ -262,13 +270,15 @@ export class PrinterRegistry {
         backendKey: ref.key,
         backendUri: ref.uri,
         capabilityReport: report,
+        // 系统默认打印机标记（Windows Win32_Printer.Default / CUPS lpstat -d；读取不到 = undefined 不猜测）
+        isSystemDefault: ref.isDefault === true ? true : undefined,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       }
       this.printers.set(id, printer)
-      this.log.printer(printer, `已从 ${kind} 后端导入打印机：${printer.name}（${ref.uri ?? ref.key}）`)
+      this.log.printer(printer, `已从 ${kind} 后端导入打印机：${printer.name}（${ref.uri ?? ref.key}${ref.isDefault === true ? ' · 系统默认' : ''}）`)
     } else {
-      // 幂等更新：字段保留 / 能力刷新
+      // 幂等更新：字段保留 / 能力刷新 / 系统默认标记以本次枚举实际值为准（undefined = 读取不到，保留旧值）
       printer.backendKey = ref.key
       printer.backendUri = ref.uri
       printer.capabilityReport = report
@@ -279,6 +289,10 @@ export class PrinterRegistry {
       if (ref.location !== undefined) printer.location = ref.location
       if (opts?.shared !== undefined) printer.shared = opts.shared
       if (opts?.test !== undefined) printer.test = opts.test
+      if (!opts?.keepSystemDefault) {
+        if (ref.isDefault !== undefined) printer.isSystemDefault = ref.isDefault === true ? true : undefined
+        else if (printer.isSystemDefault) printer.isSystemDefault = undefined
+      }
       printer.updatedAt = nowIso()
       this.log.printer(
         printer,

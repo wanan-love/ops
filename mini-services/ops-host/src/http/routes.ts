@@ -65,6 +65,19 @@ export function buildRouter(): Router {
     sendJson(res, 200, { backends })
   })
 
+  // 手动触发系统打印机自动同步（windows/cups 枚举 → 幂等导入；幂等可重复调用）
+  router.post('/api/backends/autosync', async (ctx, _req, res) => {
+    const results = await ctx.autoSync.syncOnce()
+    sendJson(res, 200, {
+      results,
+      summary: {
+        imported: results.reduce((n, r) => n + r.imported, 0),
+        updated: results.reduce((n, r) => n + r.updated, 0),
+        vanished: results.reduce((n, r) => n + r.vanished.length, 0),
+      },
+    })
+  })
+
   router.get('/api/backends/:kind/printers', async (ctx, _req, res, params) => {
     const backend = ctx.backends.get(params.kind as BackendKind)
     if (!backend) return sendError(res, 404, `后端不存在：${params.kind}（可用：${ctx.backends.kinds().join(', ')}）`)
@@ -96,7 +109,9 @@ export function buildRouter(): Router {
 
   router.get('/api/printers', (ctx, req, res) => {
     const scope = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).searchParams.get('scope') ?? 'client'
-    const list = scope === 'admin' ? ctx.printers.listAll() : ctx.printers.listShared()
+    let list = scope === 'admin' ? ctx.printers.listAll() : ctx.printers.listShared()
+    // 正式运行模式不显示虚拟打印机（防御性隔离：正式环境本就不会创建；存量脏数据也不显示，但不删除）
+    if (!ctx.hostInfo().devMode) list = list.filter((p) => !p.virtual)
     const withMeta = list.map((p) => ({ ...p, activeJobId: ctx.engine.activeJobId(p.id) ?? null }))
     sendJson(res, 200, { printers: withMeta })
   })
@@ -108,6 +123,10 @@ export function buildRouter(): Router {
   })
 
   router.post('/api/printers', (ctx, _req, res, _params, _query, body) => {
+    // 虚拟打印机创建仅开发/测试模式可用（正式运行环境不创建/不显示虚拟打印机——产品红线）
+    if (!ctx.hostInfo().devMode) {
+      return sendError(res, 403, '正式运行模式禁止创建虚拟打印机（虚拟打印机仅限开发/测试模式：OPS_DEV_MODE=1）')
+    }
     const input = parseJsonBody<CreatePrinterInput>(body)
     if (!input?.name) return sendError(res, 400, '请求体必须包含 name 字段')
     const printer = ctx.printers.create({
@@ -796,6 +815,10 @@ export function buildRouter(): Router {
   })
 
   router.post('/api/tests/run', (ctx, _req, res, _params, _query, body) => {
+    // 自测依赖虚拟打印机/仿真设备（测试专用模块）——正式运行模式不可用（与正式产品隔离红线）
+    if (!ctx.hostInfo().devMode) {
+      return sendError(res, 403, '自动化自测仅开发/测试模式可用（依赖虚拟打印机；正式模式请用真实打印机手动验证）')
+    }
     const input = parseJsonBody<{ ids?: string[] }>(body)
     if (ctx.selfTest.isRunning()) return sendError(res, 409, '已有测试运行中，请等待完成')
     const run = ctx.selfTest.start(input?.ids)

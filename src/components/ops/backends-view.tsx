@@ -12,7 +12,8 @@ import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
 import { BackendBadge, EmptyState, formatTime } from './widgets'
 import type { DiscoveredIpPrinter, VippInfo, VpjlState } from '@/lib/ops/client'
-import type { BackendStatus } from '@/lib/ops/types'
+import type { BackendStatus, BackendKind } from '@/lib/ops/types'
+import { BACKEND_LABEL } from '@/lib/ops/types'
 import type { TabValue } from './ops-app'
 
 /** Virtual IPP 各档案的能力说明（用于引导用户理解能力缺失场景） */
@@ -75,6 +76,7 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
   const [uri, setUri] = useState('')
   const [adding, setAdding] = useState(false)
   const [busyKeys, setBusyKeys] = useState<string[]>([])
+  const [syncing, setSyncing] = useState(false)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -176,6 +178,27 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
   }
 
   const importedKeys = new Set(printers.filter((p) => p.backend !== 'mock').map((p) => p.backendKey ?? ''))
+  const devMode = hostInfo?.devMode ?? false
+
+  /** 手动触发系统打印机同步（windows / cups 枚举 → 幂等导入；与后台 60s 自动同步同一入口） */
+  const syncSystemPrinters = async () => {
+    setSyncing(true)
+    try {
+      const { results, summary } = await client.autosyncBackends()
+      const lines = results
+        .map((r) => `${BACKEND_LABEL[r.kind as BackendKind] ?? r.kind}：${r.available ? `${r.imported} 新导入 / ${r.updated} 刷新` : '不可用（如实报告）'}`)
+        .join('；')
+      toast[summary.imported > 0 ? 'success' : 'info'](summary.imported > 0 ? `已发现 ${summary.imported} 台新系统打印机` : '同步完成（无新增）', {
+        description: lines,
+      })
+      await refresh()
+      await loadStatus()
+    } catch (e) {
+      toast.error('同步失败', { description: (e as Error).message })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -186,10 +209,16 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
             <ServerCog className="size-4 text-muted-foreground" aria-hidden />
             打印后端（PrinterBackend 统一接口）
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={() => void loadStatus()}>
-            <RefreshCw className="size-3.5" aria-hidden />
-            刷新状态
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => void syncSystemPrinters()} disabled={syncing} title="枚举 Windows 打印栈 / CUPS 系统真实打印机并幂等导入（后台每 60s 自动执行）">
+              <RefreshCw className={cn('size-3.5', syncing && 'animate-spin')} aria-hidden />
+              {syncing ? '同步中…' : '同步系统打印机'}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void loadStatus()}>
+              <RefreshCw className="size-3.5" aria-hidden />
+              刷新状态
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {!backends ? (
@@ -222,13 +251,15 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
             </div>
           )}
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">
-            Core 通过统一 PrinterBackend 接口访问任意后端（listPrinters / getCapabilities / getStatus / submitJob / getJobStatus / cancelJob），平台差异全部隔离在后端层。
-            CUPS 与 Windows 后端需对应宿主环境，当前为代码完备状态（待真实硬件验证）。
+            Core 通过统一 PrinterBackend 接口访问任意后端（listPrinters / getCapabilities / getStatus / submitJob / getJobStatus / cancelJob），平台差异全部隔离在后端层；可用性与平台信息均由运行时探测动态生成（不烘焙开发环境信息）。
+            系统打印机自动发现：启动即同步 + 每 60s 周期同步（Windows 打印栈 / CUPS，幂等去重）。
+            {devMode ? '' : '当前为正式运行模式：无任何虚拟设备。'}
           </p>
         </CardContent>
       </Card>
 
-      {/* ---------------------------------------------------------------- Virtual IPP Server */}
+      {/* ---------------------------------------------------------------- Virtual IPP Server（仅开发/测试模式显示；正式运行环境无虚拟设备） */}
+      {devMode && (
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
@@ -309,8 +340,10 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
           )}
         </CardContent>
       </Card>
+      )}
 
-      {/* ---------------------------------------------------------------- Virtual PJL Printer（P4 · RAW 9100 仿真） */}
+      {/* ---------------- Virtual PJL Printer（P4 · RAW 9100 仿真；仅开发/测试模式显示） */}
+      {devMode && (
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
@@ -400,6 +433,7 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ---------------------------------------------------------------- mDNS 扫描 */}
       <Card>

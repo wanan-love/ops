@@ -44,6 +44,7 @@ interface ScenarioMeta {
 export function DebugView({ goto }: { goto: (v: TabValue) => void }) {
   const printers = useOpsStore((s) => s.printers)
   const jobs = useOpsStore((s) => s.jobs)
+  const devMode = useOpsStore((s) => s.hostInfo?.devMode ?? false)
   const client = useOpsClient()
   const [printerId, setPrinterId] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -267,7 +268,8 @@ export function DebugView({ goto }: { goto: (v: TabValue) => void }) {
         )}
       </Card>
 
-      <SelfTestPanel scenarios={scenarios} />
+      {/* 自动化自测依赖虚拟打印机（测试专用模块，与正式产品隔离）——仅开发/测试模式显示 */}
+      {devMode && <SelfTestPanel scenarios={scenarios} />}
     </div>
   )
 }

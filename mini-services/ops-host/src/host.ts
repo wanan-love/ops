@@ -18,6 +18,8 @@ import { IPPPrinterBackend } from './backends/ipp-backend'
 import { CupsPrinterBackend } from './backends/cups'
 import { WindowsPrinterBackend } from './backends/windows'
 import { BackendJobRunner, BackendStatusSync } from './core/backend-jobs'
+import { BackendAutoSync } from './core/backend-autosync'
+import { detectRuntimePlatform, isDevMode, platformLabel, runtimePlatformDetail } from './core/runtime'
 import { VirtualIppServer } from './vipp/server'
 import { VirtualScanServer } from './vscan/server'
 import { VirtualPjlServer } from './vpjl/server'
@@ -50,6 +52,8 @@ export interface HostContext {
   runner: BackendJobRunner
   /** 真实后端打印机状态同步（每 5s） */
   statusSync: BackendStatusSync
+  /** 系统真实打印机自动发现与同步（windows/cups 枚举 → 幂等导入） */
+  autoSync: BackendAutoSync
   /** mDNS 浏览/通告（组播不可用时降级） */
   mdns: MdnsService
   restPort: number
@@ -82,6 +86,10 @@ export interface OpsHost {
 export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   const { restPort, wsPort, dataDir } = opts
 
+  // 开发/测试模式（OPS_DEV_MODE=1，运行时环境变量——bun build 编译绝不内联）：
+  // 正式运行环境不注册 Mock 后端、不种虚拟打印机、不启动 vipp/vscan/vpjl（虚拟设备与正式产品隔离红线）
+  const devMode = isDevMode()
+
   // 嵌入式 Web 资产（bun build --compile 时由 scripts/build-web-embed.ts 生成清单；dev/未打包时不存在）
   let embeddedWeb: Record<string, string> = {}
   try {
@@ -107,6 +115,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
 
   const printers = new PrinterRegistry(storage, bus, log)
   await printers.load()
+  // 种子虚拟打印机仅开发模式（正式运行环境：空注册表 + 系统真实打印机自动导入）
+  if (devMode) printers.loadFromDevMode()
 
   const jobs = new JobManager(storage, bus, log)
   await jobs.load()
@@ -117,8 +127,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
 
   const discovery = new DiscoveryService(settings, printers, bus, log, restPort)
 
-  // ---------------------------------------------------------------- Virtual IPP Server（:3061）
-  const vippEnabled = process.env.OPS_VIPP_ENABLED !== '0'
+  // ---------------------------------------------------------------- Virtual IPP Server（:3061，仅开发/测试模式）
+  const vippEnabled = devMode && process.env.OPS_VIPP_ENABLED !== '0'
   const vippPort = Number(process.env.OPS_VIPP_PORT ?? 3061) || 3061
   const vippPpm = Number(process.env.OPS_VIPP_PPM ?? 60) || 60
   const vippDataDir = process.env.OPS_VIPP_DATA_DIR ?? resolve(dataDir, '..', 'virtual-ipp')
@@ -136,8 +146,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     }
   }
 
-  // ---------------------------------------------------------------- Virtual eSCL Scanner（:3065）
-  const vscanEnabled = process.env.OPS_VSCAN_ENABLED !== '0'
+  // ---------------------------------------------------------------- Virtual eSCL Scanner（:3065，仅开发/测试模式）
+  const vscanEnabled = devMode && process.env.OPS_VSCAN_ENABLED !== '0'
   const vscanPort = Number(process.env.OPS_VSCAN_PORT ?? 3065) || 3065
   const vscanDataDir = process.env.OPS_VSCAN_DATA_DIR ?? resolve(dataDir, '..', 'virtual-scan')
   let vscan: VirtualScanServer | null = null
@@ -152,8 +162,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     }
   }
 
-  // ---------------------------------------------------------------- Virtual PJL Printer（RAW 9100 仿真，P4 Vendor Adapter 试点）
-  const vpjlEnabled = process.env.OPS_VPJL_ENABLED !== '0'
+  // ---------------------------------------------------------------- Virtual PJL Printer（RAW 9100 仿真，P4 Vendor Adapter 试点；仅开发/测试模式）
+  const vpjlEnabled = devMode && process.env.OPS_VPJL_ENABLED !== '0'
   const vpjlPort = Number(process.env.OPS_VPJL_PORT ?? 3067) || 3067
   const vpjlDataDir = process.env.OPS_VPJL_DATA_DIR ?? resolve(dataDir, '..', 'virtual-pjl')
   let vpjl: VirtualPjlServer | null = null
@@ -169,20 +179,22 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   }
 
   // ---------------------------------------------------------------- 统一后端
+  // IPP：开发模式对接 Virtual IPP（静态 vipp 档案）；正式模式静态列表为空（只保留手动 URI / mDNS 导入路径）
   const ippBackend = new IPPPrinterBackend({
     baseUri: `ipp://localhost:${vippPort}`,
+    staticPrinterIds: devMode ? undefined : [],
     registryFile: resolve(dataDir, 'ipp-uris.json'),
   })
-  const backends = new BackendManager([
-    new MockPrinterBackend(printers, jobs, engine),
-    ippBackend,
-    new CupsPrinterBackend({ tmpDir: resolve(dataDir, 'tmp') }),
-    new WindowsPrinterBackend(),
-  ])
+  // Mock 仅开发模式注册（正式运行环境不包含虚拟打印机后端——产品红线）
+  const backendList = devMode
+    ? [new MockPrinterBackend(printers, jobs, engine), ippBackend, new CupsPrinterBackend({ tmpDir: resolve(dataDir, 'tmp') }), new WindowsPrinterBackend()]
+    : [ippBackend, new CupsPrinterBackend({ tmpDir: resolve(dataDir, 'tmp') }), new WindowsPrinterBackend()]
+  const backends = new BackendManager(backendList)
 
-  // ---------------------------------------------------------------- 真实后端任务执行器 + 状态同步
+  // ---------------------------------------------------------------- 真实后端任务执行器 + 状态同步 + 系统打印机自动发现
   const runner = new BackendJobRunner({ printers, jobs, storage, bus, log, backends })
   const statusSync = new BackendStatusSync({ printers, bus, log, backends })
+  const autoSync = new BackendAutoSync({ printers, backends, bus, log, intervalMs: 60_000 })
 
   // ---------------------------------------------------------------- mDNS（浏览 + Virtual IPP / Virtual Scanner 自通告；vscan 在 mdns 之前创建）
   const mdns = new MdnsService({ bus, log, vipp, vscan })
@@ -211,6 +223,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     scan,
     runner,
     statusSync,
+    autoSync,
     mdns,
     restPort,
     wsPort,
@@ -221,14 +234,16 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     hostInfo(): HostInfo {
       const s = settings.get()
       const avail = backends.cachedAvailability()
+      const runtime = runtimePlatformDetail()
       return {
         service: 'openprintshare-host',
         hostId: s.hostId,
         hostName: s.hostName,
         version: OPS_VERSION,
         apiVersion: OPS_API_VERSION,
-        platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
-        platformNote: '本演示运行于 Web Host 环境（Bun 运行时）——PlatformAdapter 已按平台解耦',
+        // 平台由运行时动态检测（多信号交叉验证，绝不使用编译期/开发环境固定值）
+        platform: runtime.platform,
+        platformNote: `运行时动态检测：${runtime.signals.join('；')}；os.type=${runtime.type || '未知'}${runtime.version ? `（${runtime.version}）` : ''}${runtime.release ? ` release=${runtime.release}` : ''}${devMode ? '；开发/测试模式（OPS_DEV_MODE=1，虚拟设备已启用）' : '；正式运行模式（无虚拟设备）'}`,
         backend: backends.primaryBackend(avail ?? []),
         backends: backends.kinds(),
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
@@ -237,6 +252,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         restPort,
         wsPort,
         dataDir,
+        devMode,
+        platformRuntime: { platform: runtime.platform, signals: runtime.signals, release: runtime.release, version: runtime.version, type: runtime.type },
         vippTlsPort: vipp?.tlsActivePort ?? null,
         vscanPort: vscan?.port ?? null,
         vpjlPort: vpjl?.port ?? null,
@@ -280,35 +297,46 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   runner.start()
   statusSync.start()
   mdns.start()
+  autoSync.start()
 
-  // 首次后端可用性探测（异步，完成后广播 backend:update）
+  // 首次后端可用性探测（异步，完成后广播 backend:update；探测结果如实写入日志——不烘焙任何环境结论）
   void (async () => {
     const avail = await backends.availability(true)
     bus.emit('backend:update', { backends: avail })
-    log.host(`打印后端可用性探测完成：${avail.map((a) => `${a.kind}=${a.available ? '可用' : '不可用'}`).join('，')}`)
+    const runtime = runtimePlatformDetail()
+    log.host(
+      `运行平台（动态检测）：${platformLabel(runtime.platform)}（${runtime.type || 'os.type 未知'}${runtime.release ? ` release=${runtime.release}` : ''}）；打印后端探测：${avail.map((a) => `${a.kind}=${a.available ? '可用' : '不可用'}`).join('，')}`,
+    )
+    if (avail.some((a) => a.kind === 'mock' && a.available)) {
+      log.host('开发/测试模式：MockPrinterBackend 已注册（OPS_DEV_MODE=1；正式运行环境不包含虚拟打印机后端）')
+    }
   })()
 
   return {
     ctx,
     start: async () => {
       discovery.start()
-      log.host(`OpenPrintShare Host ${OPS_VERSION} 已启动（REST :${restPort} / Realtime :${wsPort} / Virtual IPP :${vipp ? vippPort : 'off'}，data=${dataDir}）`)
+      const runtime = runtimePlatformDetail()
+      const modeLabel = devMode ? '开发/测试模式（OPS_DEV_MODE=1：虚拟打印机/vipp/vscan/vpjl 已启用）' : '正式运行模式（真实系统打印机自动发现；无任何虚拟设备）'
+      log.host(
+        `OpenPrintShare Host ${OPS_VERSION} 已启动（REST :${restPort} / Realtime :${wsPort}，平台 ${platformLabel(runtime.platform)}（运行时检测），${modeLabel}，data=${dataDir}）`,
+      )
+      log.host(`注册打印后端：${backends.kinds().join(' + ')}（可用性以运行时探测为准）`)
       if (ctx.webDir) {
         log.host(`Web 控制台（随包静态目录）：http://localhost:${restPort}/ （目录 ${ctx.webDir}）`)
       } else if (Object.keys(ctx.embeddedWeb).length > 0) {
         log.host(`Web 控制台（单文件内嵌 ${Object.keys(ctx.embeddedWeb).length} 个静态资产）：http://localhost:${restPort}/`)
       }
-      log.host(
-        vipp
-          ? `打印后端：Mock（Virtual Printer）+ IPP 直连（Virtual IPP Server :${vippPort}，真实 RFC 8010 二进制链路）+ CUPS/Windows（代码完备，本环境不可用）`
-          : '当前打印后端：MockPrinterBackend（Virtual Printer）— Virtual IPP Server 已禁用（OPS_VIPP_ENABLED=0）',
-      )
+      if (vipp) {
+        log.host(`开发模式：Virtual IPP Server 运行于 :${vippPort}（仅供协议链路验证，正式环境不启动）`)
+      }
     },
     dispose: () => {
       engine.dispose()
       discovery.stop()
       runner.dispose()
       statusSync.stop()
+      autoSync.stop()
       mdns.stop()
       vipp?.dispose()
       vscan?.dispose()

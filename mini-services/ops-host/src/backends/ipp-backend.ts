@@ -36,7 +36,20 @@ interface AddedUriEntry {
 
 export class IPPPrinterBackend implements PrinterBackend {
   readonly kind: BackendKind = 'ipp'
-  readonly availabilityNote = 'IPP 直连后端（RFC 8010/8011 自研协议栈）：通过 Get-Printer-Attributes 探测能力、Print-Job 提交 PDF；支持 ipps://（TLS，自签名容忍 TOFU）；本环境对接 Virtual IPP Server（:3061 明文 / :3063 ipps），也可直连局域网 IPP 打印机'
+  /** 动态说明：开发模式下含 Virtual IPP 对接信息（vipp 存在时）；正式模式只描述真实能力（运行时决定，不烘焙环境） */
+  get availabilityNote(): string {
+    const devNote =
+      this.staticPrinterIds.length > 0
+        ? `开发/测试模式（OPS_DEV_MODE=1）：对接本机 Virtual IPP Server（${this.baseUri}，${this.staticPrinterIds.length} 台虚拟打印机）。`
+        : ''
+    return [
+      'IPP 直连后端（RFC 8010/8011 自研协议栈）：通过 Get-Printer-Attributes 探测能力、Print-Job 提交 PDF；支持 ipps://（TLS，自签名容忍 TOFU）；可手动添加 ipp:// URI 直连局域网 IPP 打印机。',
+      devNote,
+      '探测状态以 available() 实时探测为准（无可用 IPP 目标时不可用——如实报告，不伪造可用性）。',
+    ]
+      .filter(Boolean)
+      .join('')
+  }
 
   private readonly client: IppClient
   private readonly baseUri: string

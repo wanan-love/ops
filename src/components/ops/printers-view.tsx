@@ -21,6 +21,7 @@ import type { Capability, Printer } from '@/lib/ops/types'
 
 export function PrintersView() {
   const printers = useOpsStore((s) => s.printers)
+  const devMode = useOpsStore((s) => s.hostInfo?.devMode ?? false)
   const client = useOpsClient()
   const [creating, setCreating] = useState(false)
 
@@ -51,18 +52,31 @@ export function PrintersView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="min-w-0 flex-1 basis-52 text-sm text-muted-foreground">
-          {printers.filter((p) => p.shared).length} / {printers.length} 台已共享 · {mockCount} 台 Mock 虚拟 + {realCount} 台真实后端（IPP/CUPS/Windows）
+          {printers.filter((p) => p.shared).length} / {printers.length} 台已共享
+          {devMode ? ` · ${mockCount} 台 Mock 虚拟 + ` : ' · '}
+          {realCount} 台真实后端{devMode ? '（IPP/CUPS/Windows）' : '（Windows 打印栈 / CUPS / IPP）'}
         </p>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
-            <Plus className="size-3.5" aria-hidden />
-            添加虚拟打印机
-          </Button>
-        </div>
+        {/* 虚拟打印机创建仅开发/测试模式（正式运行环境不创建/不显示虚拟打印机——产品红线） */}
+        {devMode && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+              <Plus className="size-3.5" aria-hidden />
+              添加虚拟打印机
+            </Button>
+          </div>
+        )}
       </div>
 
       {printers.length === 0 ? (
-        <EmptyState icon={<Printer className="size-6" aria-hidden />} title="还没有打印机" hint="创建一台 Virtual Printer，或在「打印后端」页导入 Virtual IPP / 真实打印机" />
+        <EmptyState
+          icon={<Printer className="size-6" aria-hidden />}
+          title="还没有打印机"
+          hint={
+            devMode
+              ? '创建一台 Virtual Printer，或在「打印后端」页导入 Virtual IPP / 真实打印机'
+              : '正在自动发现系统真实打印机（Windows 打印栈 / CUPS）……也可在「打印后端」页手动触发同步或添加 IPP URI'
+          }
+        />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {printers.map((printer) => (
@@ -71,7 +85,7 @@ export function PrintersView() {
         </div>
       )}
 
-      <CreatePrinterDialog open={creating} onOpenChange={setCreating} />
+      {devMode && <CreatePrinterDialog open={creating} onOpenChange={setCreating} />}
     </div>
   )
 }
@@ -112,6 +126,11 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
         <div className="min-w-0">
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <span className="truncate">{printer.name}</span>
+            {printer.isSystemDefault && (
+              <Badge variant="secondary" className="bg-primary/10 text-[10px] text-primary" title="系统默认打印机（Windows Win32_Printer.Default / CUPS lpstat -d 实时读取）">
+                系统默认
+              </Badge>
+            )}
             {printer.test && <Badge variant="secondary" className="text-[10px]">TEST</Badge>}
             <BackendBadge backend={printer.backend} />
           </CardTitle>

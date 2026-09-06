@@ -6,6 +6,7 @@ import type { EventLog } from './eventlog'
 import type { PrinterRegistry } from './printers'
 import type { SettingsStore } from './settings'
 import { OPS_API_VERSION, OPS_VERSION } from './types'
+import { detectRuntimePlatform, isDevMode } from './runtime'
 
 const BEACON_PORT = 44445
 const BEACON_INTERVAL_MS = 5000
@@ -94,14 +95,15 @@ export class DiscoveryService {
 
   selfInfo(): DiscoveredHost {
     const settings = this.settings.get()
-    const printers = this.printers.listAll()
+    // 正式模式不广播虚拟打印机（防御性隔离；开发模式全量）
+    const printers = this.printers.listAll().filter((p) => isDevMode() || !p.virtual)
     return {
       hostId: settings.hostId,
       hostName: settings.hostName,
       version: OPS_VERSION,
       apiVersion: OPS_API_VERSION,
       restPort: this.restPort,
-      platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
+      platform: detectRuntimePlatform(),
       printers: printers.length,
       sharedPrinters: printers.filter((p) => p.shared).length,
       addr: this.localAddresses()[0] ?? '127.0.0.1',

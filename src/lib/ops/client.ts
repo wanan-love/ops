@@ -143,6 +143,12 @@ export function createOpsClient(port: number) {
     // system
     systemInfo: () => request<HostInfo>(port, 'GET', '/system/info'),
     systemStats: () => request<SystemStats>(port, 'GET', '/system/stats'),
+    /** 手动触发系统打印机自动同步（windows/cups 枚举 → 幂等导入） */
+    autosyncBackends: () =>
+      request<{
+        results: Array<{ kind: string; available: boolean; imported: number; updated: number; vanished: string[]; error?: string }>
+        summary: { imported: number; updated: number; vanished: number }
+      }>(port, 'POST', '/backends/autosync'),
 
     // discovery
     discoveryHosts: () => request<{ hosts: DiscoveredHost[] }>(port, 'GET', '/discovery/hosts'),

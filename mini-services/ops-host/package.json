@@ -3,10 +3,11 @@
   "version": "0.4.2",
   "private": true,
   "type": "module",
-  "description": "OpenPrintShare Host daemon — Core + Protocol + Virtual Printer (MockPrinterBackend)",
+  "description": "OpenPrintShare Host daemon — Core + Protocol + Printer Backends (Windows/CUPS/IPP)",
   "scripts": {
-    "dev": "bun --watch index.ts",
-    "start": "bun index.ts"
+    "dev": "OPS_DEV_MODE=1 bun --watch index.ts",
+    "start": "bun index.ts",
+    "dev:prod": "bun --watch index.ts"
   },
   "dependencies": {
     "pdf-lib": "^1.17.1",

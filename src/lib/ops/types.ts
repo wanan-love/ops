@@ -108,6 +108,8 @@ export interface Printer {
   speedOverridePpm: number | null
   stats: PrinterStats
   test?: boolean
+  /** 系统默认打印机标记（Windows Win32_Printer.Default / CUPS lpstat -d；后端枚举实时刷新，读取不到时缺省） */
+  isSystemDefault?: boolean
   activeJobId?: string | null
   backendKey?: string
   backendUri?: string
@@ -166,6 +168,16 @@ export interface HostInfo {
   restPort: number
   wsPort: number
   dataDir: string
+  /** 开发/测试模式（OPS_DEV_MODE=1）：虚拟打印机与仿真设备仅在此模式存在；正式运行恒 false */
+  devMode?: boolean
+  /** 运行时平台检测明细（信号链 + os 版本——真实性红线：动态检测非编译期固定值） */
+  platformRuntime?: {
+    platform: 'windows' | 'macos' | 'linux'
+    signals: string[]
+    release: string
+    version: string
+    type: string
+  }
   /** 虚拟扫描服务（eSCL）端口（null = 未启用；开发/测试用） */
   vscanPort?: number | null
   /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
