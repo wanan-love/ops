@@ -68,10 +68,10 @@ jobs:
         shell: bash
         run: bash scripts/build-windows.sh
 
-      - name: Build MSI installer (WiX v4)
+      - name: "Build MSI installer (WiX v6)"
         shell: pwsh
         run: |
-          dotnet tool install --global wix
+          dotnet tool install --global wix --version "6.*"
           $version = (Select-String -Path mini-services/ops-host/src/core/types.ts -Pattern "OPS_VERSION = '([^']+)'").Matches[0].Groups[1].Value
           wix build -arch x64 packaging/windows/openprintshare.wxs `
             -d "Version=$version" `
