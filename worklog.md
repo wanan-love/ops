@@ -211,3 +211,21 @@ Stage Summary:
 - 前端完整支持第二阶段后端：能力三态可视化、多来源探测展示、耗材 UNKNOWN 隐藏（用户硬性要求）、真实 IPP 打印全流程 UI 可用
 - 产物：backends-view.tsx（新增）、types.ts/client.ts/widgets.tsx/printers-view/print-view/overview-view/queue-view/ops-app.tsx（扩展）、README.md（v0.2.0 重写后端章节/架构图/路线图）
 - 待办：GitHub 发布 v0.2.0 + cron 定时任务
+
+---
+Task ID: 2（阶段收尾）
+Agent: main-agent
+Task: 第二阶段发布与验收
+
+Work Log:
+- 清理全部测试数据（13 台测试打印机/18 任务/1 测试运行）；种子打印机恢复共享（color-laser/mono-inkjet 共享，receipt 未共享，ipp-vipp-full/basic 共享）
+- 最终全量自测：14/14 通过（10 Mock + ipp-full-flow/ipp-capability-unknown/ipp-cancel/mdns-local-discovery）
+- git 提交 8ad3bd5（feat: v0.2.0）推送 origin/main；tag v0.2.0；GitHub Release 创建成功 https://github.com/wanan-love/ops/releases/tag/v0.2.0
+- cron webDevReview 定时任务创建成功（job_id 363003，fixed_rate 900s，任务描述含项目背景/网关说明/服务管理方式）
+- 最终验收：:3000/:3001/:3002/:3061 全监听；9 tab 连接正常、0 溢出、0 页面错误；lint 0 error；dev.log 无异常
+
+Stage Summary:
+- 第二阶段完整交付：UI 溢出根因修复 + 真实打印后端层（IPP 全链路本地验证）+ 能力三态模型 + Virtual IPP Server + mDNS + 前端可视化
+- 发布物：GitHub main@8ad3bd5、tag v0.2.0、Release v0.2.0
+- 未验证项（明确标记）：CUPS 宿主、Windows 打印栈、SNMP 实际墨量、跨主机 mDNS、ipps:// TLS —— 代码完备待真实硬件
+- 下一阶段建议：①Android/iOS 原生客户端（协议就绪）②真实硬件验证 CUPS/Windows ③ipps/TLS ④Host 控制台鉴权 ⑤vipp 条件注入 UI 完善（缺纸/卡纸演示）
