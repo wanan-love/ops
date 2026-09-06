@@ -18,12 +18,22 @@ import type {
 } from './types'
 import { getPairedToken, loadDevice } from './device'
 
-/** 协议约定：REST {port} + Realtime {port+1}（经网关 ?XTransformPort） */
+/** 协议约定：REST {port} + Realtime {port+1}
+ *  - 网关模式（默认/沙箱）：相对路径 + ?XTransformPort（Caddy 转发）
+ *  - 直连模式（打包产物，NEXT_PUBLIC_OPS_DIRECT=1 构建时注入）：REST 同源相对路径，
+ *    WS 绝对地址（页面由 Host 本体服务时，WS 独立端口直连）
+ */
+export const OPS_DIRECT_MODE = process.env.NEXT_PUBLIC_OPS_DIRECT === '1'
+
 export function restUrl(port: number, path: string): string {
   return `/api${path}${path.includes('?') ? '&' : '?'}XTransformPort=${port}`
 }
 
 export function wsUrl(rtPort: number): string {
+  if (OPS_DIRECT_MODE && typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    return `${proto}://${window.location.hostname}:${rtPort}`
+  }
   return `/?XTransformPort=${rtPort}`
 }
 

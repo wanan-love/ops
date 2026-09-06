@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">OpenPrintShare</string>
+    <string name="connect">连接控制台</string>
+    <string name="host_hint">Host 地址（如 192.168.1.50）</string>
+    <string name="connect_hint">输入局域网内 OpenPrintShare Host 设备的地址\n（在设备 A 上启动 Host 后，其控制台运行于 3001 端口）</string>
+    <string name="err_empty_host">请输入 Host 地址</string>
+</resources>

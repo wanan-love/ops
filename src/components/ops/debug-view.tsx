@@ -81,9 +81,12 @@ export function DebugView({ goto }: { goto: (v: TabValue) => void }) {
     <div className="space-y-4">
       <Card>
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <Gauge className="size-4 text-muted-foreground" aria-hidden />
             Virtual Printer 模拟控制台
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              开发 / 测试
+            </Badge>
           </CardTitle>
           <div className="flex items-center gap-2">
             <Select value={printer?.id ?? ''} onValueChange={(v) => { setPrinterId(v); setSpeed(null) }}>
@@ -396,10 +399,10 @@ function SelfTestPanel({ scenarios }: { scenarios: ScenarioMeta[] }) {
                         </div>
                       </div>
                       <CollapsibleContent>
-                        <div className="mt-2 space-y-1.5 border-l-2 border-border pl-3">
-                          {r.error && <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{r.error}</p>}
+                        <div className="mt-2 min-w-0 space-y-1.5 border-l-2 border-border pl-3">
+                          {r.error && <p className="break-words rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{r.error}</p>}
                           {r.steps.map((s, i) => (
-                            <p key={i} className={`text-xs ${s.ok ? 'text-foreground/80' : 'text-destructive'}`}>
+                            <p key={i} className={`min-w-0 break-words text-xs ${s.ok ? 'text-foreground/80' : 'text-destructive'}`}>
                               <span className="font-mono text-[10px] text-muted-foreground/70">[{s.name}]</span> {s.detail}
                             </p>
                           ))}

@@ -203,7 +203,10 @@ export class PrinterRegistry {
   // ------------------------------------------------------- 真实后端导入与能力刷新
 
   /**
-   * 从后端导入打印机（幂等：同 backend+backendKey 已存在则更新）。
+   * 从后端导入打印机（幂等去重）：
+   *  1. 同 backend+backendKey → 复用既有条目（刷新能力）
+   *  2. 同 backend 且 backendUri 归一化相同 → 视为同一台物理设备，复用既有条目
+   *     （解决「后端列表导入（key=vipp-full）」与「mDNS 发现/手动 URI 添加（key=完整 URI）」双路径重复）
    * 创建/更新 Printer 实体（backend/backendKey/backendUri/virtual=false）→ 立即 getCapabilities
    * → 存 capabilityReport + resolveEffectiveCaps → capabilities → 落盘。
    */
@@ -221,6 +224,18 @@ export class PrinterRegistry {
       quality: 'normal',
     }
     let printer = this.printers.get(id)
+    let deduped = false
+    if (!printer && ref.uri) {
+      // URI 归一化去重：同一台设备可能经不同路径导入（后端列表 key / mDNS URI / 手动 URI）
+      const target = normalizePrinterUri(ref.uri)
+      const existing = this.listAll().find(
+        (p) => p.backend === kind && p.backendUri && normalizePrinterUri(p.backendUri) === target,
+      )
+      if (existing) {
+        printer = existing
+        deduped = true
+      }
+    }
     if (!printer) {
       printer = {
         id,
@@ -259,7 +274,12 @@ export class PrinterRegistry {
       if (opts?.shared !== undefined) printer.shared = opts.shared
       if (opts?.test !== undefined) printer.test = opts.test
       printer.updatedAt = nowIso()
-      this.log.printer(printer, `已刷新后端打印机导入信息：${printer.name}（${ref.uri ?? ref.key}）`)
+      this.log.printer(
+        printer,
+        deduped
+          ? `去重合并：${ref.uri ?? ref.key} 与既有条目指向同一设备，已复用「${printer.name}」并刷新能力`
+          : `已刷新后端打印机导入信息：${printer.name}（${ref.uri ?? ref.key}）`,
+      )
     }
     await this.persistNow()
     this.bus.emit('printer:update', { printer })
@@ -343,4 +363,24 @@ function sanitizeKey(key: string): string {
     .replace(/^-|-$/g, '')
     .slice(0, 48)
   return cleaned === '' ? randomUUID().slice(0, 8) : cleaned
+}
+
+/**
+ * URI 归一化（去重用）：小写 scheme/host、回环别名归一为 127.0.0.1、去尾斜杠。
+ * 例：ipp://LocalHost:3061/printers/x/ 与 ipp://127.0.0.1:3061/printers/x → 同一。
+ * 远端主机不同名称/地址不做合并（无法离线判定为同一设备，保守策略）。
+ */
+export function normalizePrinterUri(uri: string): string {
+  const m = /^([a-z]+):\/\/([^\/:?#]+)(?::(\d+))?(\/.*)?$/i.exec(uri.trim())
+  if (!m) return uri.trim().toLowerCase().replace(/\/+$/, '')
+  const scheme = m[1].toLowerCase()
+  const host = m[2].toLowerCase()
+  const port = m[3]
+  const rest = m[4] ?? ''
+  const isLoopback = host === 'localhost' || host === '::1' || /^0*127(\.\d{1,3}){3}$/.test(host) || host === '0.0.0.0'
+  const canonicalHost = isLoopback ? '127.0.0.1' : host
+  const isDefaultPort = (scheme === 'ipp' || scheme === 'ipps') && port === '631'
+  const portPart = port && !isDefaultPort ? `:${port}` : ''
+  const path = rest.replace(/\/+$/, '')
+  return `${scheme}://${canonicalHost}${portPart}${path}`
 }

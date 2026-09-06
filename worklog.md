@@ -229,3 +229,29 @@ Stage Summary:
 - 发布物：GitHub main@8ad3bd5、tag v0.2.0、Release v0.2.0
 - 未验证项（明确标记）：CUPS 宿主、Windows 打印栈、SNMP 实际墨量、跨主机 mDNS、ipps:// TLS —— 代码完备待真实硬件
 - 下一阶段建议：①Android/iOS 原生客户端（协议就绪）②真实硬件验证 CUPS/Windows ③ipps/TLS ④Host 控制台鉴权 ⑤vipp 条件注入 UI 完善（缺纸/卡纸演示）
+
+---
+Task ID: 3（第二阶段续）
+Agent: main-agent
+Task: Web UI 日志溢出修复 + Mock 定位调整 + 发现去重 + 跨平台打包全链路（v0.3.0）
+
+Work Log:
+- 【日志/长文本溢出】修复 4 处真实布局根因（非 overflow:hidden 掩盖）：①TimelineList entry.message 加 min-w-0 break-words（长 URL/Stack Trace 换行）②debug-view 自测 r.error/步骤 detail 加 break-words + min-w-0 ③printers-view CapRow detail 由 truncate 改 line-clamp-2 break-words（title 保留全文）④probe 错误文本 break-words；events-view 原有 max-h-[36rem] ScrollArea + break-all 确认达标（store 事件上限 300）
+- 【Mock 定位调整】README 重写：产品目标去「无打印机也能完整运行」卖点、Mock 表格移出后端列表、新增「开发与测试环境（Mock / Virtual）」章节明确仅限单元/集成/CI/开发；layout.tsx metadata 改为产品描述；overview 快速开始文案改「接入真实打印机请前往打印后端」；footer 后端徽标动态显示；debug tab 更名「调试 · 开发测试」并移至末位；debug-view/backends-view 加 amber「开发 / 测试」徽章 + VIPP 面板标注非产品功能（OPS_VIPP_ENABLED=0 可关）
+- 【发现去重】printers.ts importFromBackend 增加 URI 归一化去重（normalizePrinterUri：小写 scheme/host、回环别名 localhost/127.*/::1/0.0.0.0 归一 127.0.0.1、ipp 默认端口 631 剥离、去尾斜杠）——解决「后端列表导入（key=vipp-full）」与「mDNS 发现/手动 URI 添加（key=完整 URI）」双路径重复；实测：backend 导入 ipp-vipp-full 后再 add-uri ipp://127.0.0.1:3061/printers/vipp-full → 复用同一条目（backendKey 更新为 URI 形式）+ 去重合并事件日志
+- 【Host CLI 化】index.ts 重写为正式 CLI：--port/--ws-port/--data-dir/--web/--no-vipp/--version/--help（env 等价 OPS_*）；启动 banner；SIGTERM/SIGINT 优雅退出；版本统一 0.3.0（types.ts/package.json）
+- 【静态 Web 服务】http/server.ts 增 serveStatic：①磁盘 webDir（--web/OPS_WEB_DIR）MIME 表 + SPA 回退 + 路径遍历防护 + 哈希资产 immutable 缓存 ②嵌入资产（bun compile 虚拟路径 /$bunfs/root/…，Bun.file 读取）——修复关键 bug：GET / 的 MIME 须按实际文件名（/index.html）计算而非请求路径（/），否则 text/html 误判 octet-stream 导致浏览器导航 ERR_ABORTED
+- 【前端直连模式】client.ts 增加 OPS_DIRECT_MODE（NEXT_PUBLIC_OPS_DIRECT=1 构建时注入）：WS 绝对地址 ws://hostname:port，REST 保持同源相对路径；next.config.ts 双形态（OPS_EXPORT=1 → output:'export' + env 注入；默认 standalone 供 Docker）
+- 【打包体系】scripts/build-{common,web,host,linux,windows,macos,android,ios,all}：bun build --compile 交叉编译 5 目标（linux-x64/arm64、windows-x64、darwin-x64/arm64）+ scripts/build-web-embed.ts 生成资产嵌入清单（import … with {type:'file'} glob→逐文件，30 个文件）→ 真·单文件可执行；build-linux.sh 产出 .deb（dpkg-deb：/opt/openprintshare + /usr/bin 符号链接 + .desktop + postinst 防火墙提示）+ AppImage（appimagetool 自动下载，AppRun 数据目录 $HOME/.openprintshare）；build-windows.sh 产出 exe + 便携 zip（使用说明.txt）；packaging/windows/openprintshare.wxs（WiX v4 MSI：开始菜单快捷方式 + 防火墙规则 + 卸载注册表）
+- 【原生客户端壳】clients/android（Gradle Kotlin WebView 壳：MainActivity 连接表单 + WebView 直连 Host 控制台、LAN 明文 network_security_config、返回键 WebView 历史栈、矢量自适应图标）；clients/ios（手写 Xcode 16 工程 project.pbxproj（PBXFileSystemSynchronizedRootGroup）+ SwiftUI App.swift（WKWebView + 连接表单 + LAN 判定）+ Info.plist（NSAllowsLocalNetworking）+ Assets.xcassets）
+- 【CI 自动构建】.github/workflows/release-build.yml：v* tag 触发，5 job 并行（linux x64+arm64 deb/AppImage、windows exe+zip+MSI、macos dmg/app、android apk、ios archive）→ 汇总 softprops/action-gh-release 自动发布
+- 【产物实测】单文件 93MB（linux-x64）：浏览器加载 ✓ WS 直连 ✓ 提交 PDF→completed(100%) ✓ 数据落盘 ✓；AppImage --appimage-extract-and-run 200 OK ✓；Windows exe PE32+ 格式验证 ✓（CI 运行）；macOS Mach-O arm64/x64 ✓；.deb 结构 dpkg-deb -c 验证 ✓；CLI --version/--help ✓
+- 【最终 QA】lint 0 error 0 warning；agent-browser 经网关 :81：9 tab（新 tab 名）× [1280/375/320] 全部 0px 横向溢出；注入 393 字符超长事件（150 字符 URI+80 字符名）后事件日志 0 溢出、日志滚动容器在位；console error 0；UI 完整打印流程（示例文档→提交→队列已完成）✓；清理测试数据（删除超长测试打印机，保留 3 台）
+- 【数据目录一致性】index.ts 默认 dataDir 保持 ./data/mock-printer（与运行中服务/文档一致，避免重启换目录导致数据"丢失"；打包产物由各自启动器显式设置数据目录）
+
+Stage Summary:
+- 产物清单：scripts/ 9 个构建脚本、packaging/windows/openprintshare.wxs、clients/android 完整 Gradle 工程、clients/ios 完整 Xcode 工程、.github/workflows/release-build.yml、修改 12 文件（前端 7 + host 5）
+- dist/ 实测产物（linux x64 93M + .deb 25M + .AppImage 33M、windows exe 97M + zip 37M、macos arm64 64M + x64 69M）；命名 OpenPrintShare-{Platform}-{arch}-0.3.0{.ext} 符合规范
+- 打包原则达成：用户下载→双击→启动→浏览器 http://localhost:3001/ 即用；Bun 运行时 + Web 控制台全部内嵌单文件，无需 Node/Python/Rust/Java
+- 待真实环境验证：Windows exe 实际运行（CI/用户机器）、macOS .app/.dmg（CI macos runner）、Android APK（CI）、MSI（CI WiX）、跨主机 mDNS、CUPS/Windows 后端宿主
+- 风险：release-build.yml 推送可能仍受 PAT Workflows 权限限制（同第一阶段问题）——若失败则本地产物直接上传 Release 资产

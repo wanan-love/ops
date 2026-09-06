@@ -15,7 +15,7 @@ export function Footer() {
           <span className="font-medium">OpenPrintShare v{hostInfo?.version ?? '0.1.0'}</span>
           <span className="hidden items-center gap-1 sm:flex" title={hostInfo?.dataDir}>
             <HardDrive className="size-3" aria-hidden />
-            MockPrinterBackend · Virtual Printer
+            {hostInfo?.backends?.length ? `后端：${hostInfo.backends.map((b) => b.toUpperCase()).join(' / ')}` : 'PrinterBackend 统一接口'}
           </span>
           <span className="flex items-center gap-1">
             <span className={`size-1.5 rounded-full ${socketConnected ? 'bg-emerald-500' : 'bg-zinc-400'}`} aria-hidden />

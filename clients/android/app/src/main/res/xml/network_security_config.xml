@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 局域网 HTTP 明文（OpenPrintShare Host 默认 http://host:3001；生产可经反向代理上 TLS） -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

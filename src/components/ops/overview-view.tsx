@@ -85,7 +85,7 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             <Row label="主机名" value={hostInfo?.hostName ?? '—'} />
             <Row label="Host ID" value={hostInfo ? hostInfo.hostId.slice(0, 13) + '…' : '—'} mono />
             <Row label="版本" value={`v${hostInfo?.version ?? '—'} · OPS/${hostInfo?.apiVersion ?? '—'}`} />
-            <Row label="平台" value={`${hostInfo?.platform ?? '—'}（Web Host 演示环境）`} />
+            <Row label="平台" value={hostInfo?.platform ?? '—'} />
             <Row label="运行时长" value={hostInfo ? formatUptime(hostInfo.uptimeSec + uptime) : '—'} mono />
             <Row label="安全模式" value={hostInfo?.securityMode === 'pairing' ? '配对（需令牌）' : '开放（局域网信任）'} />
             <Row
@@ -179,7 +179,7 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
               3. 调试控制台 / 自动化测试
             </Button>
             <p className="pt-1 text-[11px] leading-relaxed text-muted-foreground/70">
-              当前为 Virtual Printer（MockPrinterBackend）演示环境，无需真实打印机即可完整体验：发现 → 打印 → 队列 → 状态模拟 → 测试报告。
+              接入真实打印机请前往「打印后端」：通过 mDNS 扫描或 IPP URI 添加，能力由设备真实返回（读取不到 ≠ 不支持）。
             </p>
           </CardContent>
         </Card>

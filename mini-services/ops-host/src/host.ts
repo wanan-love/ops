@@ -46,6 +46,10 @@ export interface HostContext {
   restPort: number
   wsPort: number
   dataDir: string
+  /** 打包模式：随二进制分发的 Web 控制台静态目录（null = 未启用） */
+  webDir: string | null
+  /** 打包模式：嵌入二进制的 Web 资产（Web 路径 → Bun 虚拟路径；空 = 未嵌入） */
+  embeddedWeb: Record<string, string>
   startedAt: number
   hostInfo(): HostInfo
   /** 模拟 Host 重启：停引擎 → 从磁盘重建内存状态 → 恢复进行中任务 */
@@ -56,6 +60,8 @@ export interface HostOptions {
   restPort: number
   wsPort: number
   dataDir: string
+  /** 打包模式 Web 静态目录 */
+  webDir?: string | null
 }
 
 export interface OpsHost {
@@ -67,6 +73,13 @@ export interface OpsHost {
 export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   const { restPort, wsPort, dataDir } = opts
 
+  // 嵌入式 Web 资产（bun build --compile 时由 scripts/build-web-embed.ts 生成清单；dev/未打包时不存在）
+  let embeddedWeb: Record<string, string> = {}
+  try {
+    embeddedWeb = (await import('./generated/web-embed')).EMBEDDED_WEB
+  } catch {
+    /* 未生成（开发模式）——磁盘 webDir 或纯 API 模式 */
+  }
   const storage = new FileStorage(dataDir)
   await storage.init()
 
@@ -144,6 +157,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     restPort,
     wsPort,
     dataDir,
+    webDir: opts.webDir ?? null,
+    embeddedWeb,
     startedAt,
     hostInfo(): HostInfo {
       const s = settings.get()
@@ -216,6 +231,11 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     start: async () => {
       discovery.start()
       log.host(`OpenPrintShare Host ${OPS_VERSION} 已启动（REST :${restPort} / Realtime :${wsPort} / Virtual IPP :${vipp ? vippPort : 'off'}，data=${dataDir}）`)
+      if (ctx.webDir) {
+        log.host(`Web 控制台（随包静态目录）：http://localhost:${restPort}/ （目录 ${ctx.webDir}）`)
+      } else if (Object.keys(ctx.embeddedWeb).length > 0) {
+        log.host(`Web 控制台（单文件内嵌 ${Object.keys(ctx.embeddedWeb).length} 个静态资产）：http://localhost:${restPort}/`)
+      }
       log.host(
         vipp
           ? `打印后端：Mock（Virtual Printer）+ IPP 直连（Virtual IPP Server :${vippPort}，真实 RFC 8010 二进制链路）+ CUPS/Windows（代码完备，本环境不可用）`

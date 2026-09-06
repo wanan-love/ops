@@ -191,7 +191,7 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
                         <li key={`${p.source}-${i}`} className="flex items-center gap-2 text-[11px]">
                           <span className={cn('size-1.5 shrink-0 rounded-full', p.ok ? 'bg-emerald-500' : 'bg-red-500')} aria-hidden />
                           <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground">{p.source}</span>
-                          <span className="min-w-0 truncate text-muted-foreground">
+                          <span className="min-w-0 flex-1 break-words text-muted-foreground">
                             {p.ok ? `成功（${p.durationMs}ms）` : p.error ?? '失败'}
                           </span>
                         </li>
@@ -292,7 +292,7 @@ function CapRow<T>({ label, cap, render }: { label: string; cap: Capability<T>; 
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
       <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
       <CapabilityStateBadge state={cap.state} />
-      <span className="min-w-0 flex-1 truncate text-foreground/80" title={cap.detail}>
+      <span className="min-w-0 flex-1 break-words text-foreground/80 line-clamp-2" title={cap.detail}>
         {cap.state !== 'unknown' && cap.value !== null ? render(cap.value) : cap.detail ? cap.detail : '未读取到（读取不到 ≠ 不支持）'}
       </span>
       <span className="shrink-0 font-mono text-[9px] uppercase text-muted-foreground/50">{cap.source} · {formatTime(cap.timestamp)}</span>

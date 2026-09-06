@@ -26,8 +26,8 @@ const TAB_ITEMS = [
   { value: 'queue', label: '打印队列' },
   { value: 'pairing', label: '设备配对' },
   { value: 'backends', label: '打印后端' },
-  { value: 'debug', label: '调试控制台' },
   { value: 'events', label: '事件日志' },
+  { value: 'debug', label: '调试 · 开发测试' },
 ] as const
 
 export type TabValue = (typeof TAB_ITEMS)[number]['value']

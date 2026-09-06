@@ -176,6 +176,9 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
           <CardTitle className="flex flex-wrap items-center gap-2 text-base">
             <RadioTower className="size-4 text-muted-foreground" aria-hidden />
             Virtual IPP Server
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              开发 / 测试工具
+            </Badge>
             {vipp && (
               <Badge variant="secondary" className="font-mono text-[10px]">
                 :{vipp.port} · RFC 8010/8011
@@ -185,8 +188,9 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            本机内置的「虚拟 IPP 打印机」服务——使用<strong className="text-foreground">真实 IPP 二进制协议</strong>（Get-Printer-Attributes / Print-Job / Get-Job-Attributes / Cancel-Job），
-            无需实体打印机即可验证 IPPPrinterBackend 全链路。四台打印机分别模拟<strong className="text-foreground">不同能力缺失组合</strong>，用于测试能力三态模型。
+            面向<strong className="text-foreground">开发与测试环境</strong>的本地 IPP 模拟服务——使用真实 IPP 二进制协议（Get-Printer-Attributes / Print-Job / Get-Job-Attributes / Cancel-Job），
+            用于在没有实体打印机的 CI/开发环境中验证 IPPPrinterBackend 全链路。四台打印机分别模拟<strong className="text-foreground">不同能力缺失组合</strong>，用于测试能力三态模型。
+            （不属于产品功能，生产部署可用 OPS_VIPP_ENABLED=0 关闭）
           </p>
           {!vipp ? (
             <div className="h-20 animate-pulse rounded-lg bg-muted/50" />

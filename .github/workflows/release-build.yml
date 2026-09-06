@@ -1,0 +1,186 @@
+name: release-build
+
+# OpenPrintShare 多平台自动构建：推送 v* tag 或手动触发
+# 产物：Windows exe/msi/zip · macOS dmg/app · Linux AppImage/deb/二进制 · Android apk · iOS（有证书时 ipa）
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------- Linux（x64 + arm64）
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build web + embedded host
+        run: |
+          bun install --frozen-lockfile
+          OPS_EXPORT=1 bunx next build
+          (cd mini-services/ops-host && bun install --frozen-lockfile && bun ../../scripts/build-web-embed.ts ../../out)
+
+      - name: Package Linux (x64: binary + .deb + AppImage; arm64: binary + .deb)
+        run: |
+          bash scripts/build-linux.sh x64
+          # arm64 附加产物（AppImage 工具链对 arm64 CI 环境按需跳过）
+          bash scripts/build-host.sh linux-arm64
+          VERSION=$(grep -oP "OPS_VERSION = '\K[^']+" mini-services/ops-host/src/core/types.ts | head -1)
+          DEBROOT=dist/.stage/deb-arm64
+          mkdir -p "$DEBROOT/opt/openprintshare" "$DEBROOT/usr/bin" "$DEBROOT/usr/share/applications" "$DEBROOT/DEBIAN"
+          cp dist/linux/OpenPrintShare-Linux-arm64-$VERSION "$DEBROOT/opt/openprintshare/openprintshare"
+          chmod 755 "$DEBROOT/opt/openprintshare/openprintshare"
+          ln -s /opt/openprintshare/openprintshare "$DEBROOT/usr/bin/openprintshare"
+          printf 'Package: openprintshare\nVersion: %s\nSection: net\nPriority: optional\nArchitecture: arm64\nMaintainer: OpenPrintShare <wanan-love@users.noreply.github.com>\nDescription: OpenPrintShare Host (arm64)\nHomepage: https://github.com/wanan-love/ops\n' "$VERSION" > "$DEBROOT/DEBIAN/control"
+          dpkg-deb --root-owner-group --build "$DEBROOT" "dist/linux/OpenPrintShare-Linux-arm64-$VERSION.deb"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: |
+            dist/linux/*
+            !dist/linux/.stage
+
+  # ------------------------------------------------------------- Windows（exe + 便携 zip + MSI）
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build web + embedded host
+        shell: bash
+        run: |
+          bun install --frozen-lockfile
+          OPS_EXPORT=1 bunx next build
+          (cd mini-services/ops-host && bun install --frozen-lockfile && bun ../../scripts/build-web-embed.ts ../../out)
+
+      - name: Compile exe + portable zip
+        shell: bash
+        run: bash scripts/build-windows.sh
+
+      - name: Build MSI installer (WiX v4)
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix
+          $version = (Select-String -Path mini-services/ops-host/src/core/types.ts -Pattern "OPS_VERSION = '([^']+)'").Matches[0].Groups[1].Value
+          wix build -arch x64 packaging/windows/openprintshare.wxs `
+            -d "Version=$version" `
+            -d "ExePath=dist/windows/OpenPrintShare-Windows-x64-$version.exe" `
+            -o "dist/windows/OpenPrintShare-Windows-x64-$version.msi"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: |
+            dist/windows/*
+
+  # ------------------------------------------------------------- macOS（.app + .dmg，原生宿主构建）
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build web + embedded host
+        run: |
+          bun install --frozen-lockfile
+          OPS_EXPORT=1 bunx next build
+          (cd mini-services/ops-host && bun install --frozen-lockfile && bun ../../scripts/build-web-embed.ts ../../out)
+
+      - name: Build .app + .dmg (arm64 + x64)
+        run: bash scripts/build-macos.sh --dmg
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: |
+            dist/macos/*
+
+  # ------------------------------------------------------------- Android（APK）
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build APK (debug-signed universal)
+        working-directory: clients/android
+        run: |
+          gradle assembleRelease --no-daemon -Pandroid.injected.signing.store.file=$RUNNER_TEMP/keystore 2>/dev/null || gradle assembleDebug --no-daemon
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          VERSION=$(grep -oP "OPS_VERSION = '\K[^']+" mini-services/ops-host/src/core/types.ts | head -1)
+          mkdir -p dist/android
+          find clients/android/app/build/outputs/apk -name "*.apk" | head -1 | xargs -I{} cp {} "dist/android/OpenPrintShare-Android-arm64-$VERSION.apk"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-android
+          path: dist/android/*
+
+  # ------------------------------------------------------------- iOS（有签名证书时产出 ipa）
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Archive iOS app
+        working-directory: clients/ios
+        run: |
+          xcodebuild -project OpenPrintShare.xcodeproj -scheme OpenPrintShare \
+            -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' \
+            archive -archivePath ../../dist/ios/OpenPrintShare.xcarchive CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-ios
+          path: dist/ios/*
+
+  # ------------------------------------------------------------- 汇总发布 GitHub Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-windows, build-macos, build-android, build-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find dist-artifacts -type f ! -name "*.yml" -exec cp {} release/ \;
+          ls -lh release/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

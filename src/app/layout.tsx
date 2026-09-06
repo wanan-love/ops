@@ -17,15 +17,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "OpenPrintShare — 跨平台局域网共享打印机",
   description:
-    "OpenPrintShare (OPS)：设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 自动发现并打印。MVP 内置 Virtual Printer（MockPrinterBackend），无需真实打印机即可完整演示。",
-  keywords: ["OpenPrintShare", "OPS", "打印机共享", "CUPS", "IPP", "AirPrint", "mDNS", "Virtual Printer"],
+    "OpenPrintShare (OPS)：设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 自动发现并打印。支持 CUPS / IPP / Windows 打印栈，能力由设备真实返回。",
+  keywords: ["OpenPrintShare", "OPS", "打印机共享", "CUPS", "IPP", "AirPrint", "mDNS", "Windows Printing"],
   authors: [{ name: "OpenPrintShare" }],
   icons: {
     icon: "/logo.svg",
   },
   openGraph: {
     title: "OpenPrintShare",
-    description: "跨平台局域网共享打印机 · Virtual Printer 演示环境",
+    description: "跨平台局域网共享打印机 · 系统打印栈接入",
     siteName: "OpenPrintShare",
     type: "website",
   },

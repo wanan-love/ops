@@ -1,0 +1,80 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!--
+    OpenPrintShare Windows MSI 安装器（WiX v4）
+    CI 构建：dotnet tool install --global wix && wix build -arch x64 -d Version=x.y.z -d ExePath=path/to/exe openprintshare.wxs
+  -->
+  <Package
+    Name="OpenPrintShare"
+    Version="$(Version)"
+    Manufacturer="OpenPrintShare"
+    Language="1033" Codepage="1252"
+    UpgradeCode="7B9E45C0-5A62-4C4E-9C63-1E5F2A9D3B01"
+    Scope="perMachine"
+    InstallerVersion="500">
+    <SummaryDescription>OpenPrintShare — 跨平台局域网共享打印机（Host）。运行时已随程序打包，无需安装 Node/Python/Rust。</SummaryDescription>
+
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 OpenPrintShare，无法降级安装。" />
+
+    <MediaTemplate EmbedCab="true" />
+
+    <Feature Id="Main" Title="OpenPrintShare" Level="1">
+      <Feature Id="ShortcutFeature" Title="开始菜单快捷方式" Level="1">
+        <ComponentRef Id="StartMenuShortcut" />
+      </Feature>
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="RegistryKeys" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="OpenPrintShare">
+        <Component Id="MainExecutable" Guid="A1C2E3F4-1111-4A2B-8C3D-4E5F6A7B8C9D">
+          <File Id="OpenPrintShareExe" Source="$(ExePath)" Name="OpenPrintShare.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="RegistryKeys" Guid="A1C2E3F4-2222-4A2B-8C3D-4E5F6A7B8C9D">
+          <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintShare"
+            Name="InstallDir" Value="[INSTALLDIR]" Type="string" KeyPath="yes" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenPrintShare"
+            Name="DisplayName" Value="OpenPrintShare" Type="string" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenPrintShare"
+            Name="DisplayVersion" Value="$(Version)" Type="string" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenPrintShare"
+            Name="Publisher" Value="OpenPrintShare" Type="string" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenPrintShare"
+            Name="InstallLocation" Value="[INSTALLDIR]" Type="string" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="OpenPrintShare">
+        <Component Id="StartMenuShortcut" Guid="A1C2E3F4-3333-4A2B-8C3D-4E5F6A7B8C9D">
+          <Shortcut Id="StartMenuAppShortcut"
+            Name="OpenPrintShare"
+            Description="跨平台局域网共享打印机 Host（启动后控制台 http://localhost:3001/）"
+            Target="[INSTALLDIR]OpenPrintShare.exe"
+            WorkingDirectory="INSTALLDIR" />
+          <RemoveFolder Id="ApplicationProgramsFolderRemove" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\OpenPrintShare\Shortcuts" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <CustomAction Id="FirewallRuleAdd"
+      ExeCommand='netsh advfirewall firewall add rule name="OpenPrintShare Host" dir=in action=allow program="[INSTALLDIR]OpenPrintShare.exe" enable=yes profile=any'
+      Return="ignore"
+      Impersonate="no"
+      Execute="deferred" />
+    <CustomAction Id="FirewallRuleRemove"
+      ExeCommand='netsh advfirewall firewall delete rule name="OpenPrintShare Host"'
+      Return="ignore"
+      Impersonate="no"
+      Execute="deferred" />
+
+    <InstallExecuteSequence>
+      <Custom Action="FirewallRuleAdd" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE" />
+      <Custom Action="FirewallRuleRemove" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <Launch Condition="Installed OR VersionNT64" Message="OpenPrintShare 需要 64 位 Windows。" />
+  </Package>
+</Wix>

@@ -63,3 +63,7 @@ db/
 
 # agent 工具产物
 tool-results/
+
+# 打包产物
+dist/
+mini-services/ops-host/src/generated/

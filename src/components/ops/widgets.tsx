@@ -223,7 +223,7 @@ export function TimelineList({ timeline }: { timeline: TimelineEntry[] }) {
                 </span>
               )}
             </div>
-            {entry.message && <p className="mt-0.5 text-xs text-foreground/80">{entry.message}</p>}
+            {entry.message && <p className="mt-0.5 min-w-0 break-words text-xs text-foreground/80">{entry.message}</p>}
           </li>
         )
       })}
