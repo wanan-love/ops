@@ -3,9 +3,8 @@
 import { Activity, ArrowRight, CircleCheck, FileText, HardDrive, Printer, Rocket, Wifi } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useOpsClient, useOpsStore } from './store'
-import { EmptyState, JobProgress, JobStateBadge, formatBytes, formatTime } from './widgets'
+import { EmptyState, FadingScrollArea, JobProgress, JobStateBadge, formatBytes, formatTime } from './widgets'
 import { BACKEND_LABEL } from '@/lib/ops/types'
 import { useEffect, useState } from 'react'
 import type { SystemStats } from '@/lib/ops/types'
@@ -113,7 +112,7 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             {activeJobs.length === 0 ? (
               <EmptyState icon={<FileText className="size-6" aria-hidden />} title="当前没有进行中的任务" hint="在「打印」页提交 PDF，或在「调试控制台」运行自动化测试" />
             ) : (
-              <ScrollArea className="max-h-72 pr-3">
+              <FadingScrollArea className="max-h-72 pr-3">
                 <ul className="space-y-3">
                   {activeJobs.map((job) => {
                     const printer = printers.find((p) => p.id === job.printerId)
@@ -131,7 +130,7 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
                     )
                   })}
                 </ul>
-              </ScrollArea>
+              </FadingScrollArea>
             )}
           </CardContent>
         </Card>
@@ -143,21 +142,21 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             <CardTitle className="text-base">最近事件</CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="max-h-64 pr-3">
+            <FadingScrollArea className="max-h-64 pr-3">
               {events.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">暂无事件</p>
               ) : (
                 <ul className="space-y-1.5 font-mono text-xs">
                   {events.slice(0, 30).map((e) => (
-                    <li key={e.id} className="flex gap-2">
+                    <li key={e.id} className="flex items-baseline gap-2">
                       <span className="shrink-0 tabular-nums text-muted-foreground">{formatTime(e.at)}</span>
                       <span className="shrink-0 font-medium text-muted-foreground/80">[{e.type}]</span>
-                      <span className="text-foreground/90">{e.message}</span>
+                      <span className="min-w-0 flex-1 break-all text-foreground/90">{e.message}</span>
                     </li>
                   ))}
                 </ul>
               )}
-            </ScrollArea>
+            </FadingScrollArea>
           </CardContent>
         </Card>
 

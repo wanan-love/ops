@@ -258,23 +258,35 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
             <EmptyState icon={<CircleHelp className="size-5" aria-hidden />} title="未发现网络 IPP 打印机" hint="当前局域网没有响应 mDNS 的设备；Virtual IPP 自通告需 Host 在运行中" />
           ) : (
             <ul className="space-y-2">
-              {mdnsPrinters.map((p) => (
-                <li key={p.uri} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3 transition-colors duration-200 hover:border-primary/30">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Globe className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="truncate text-sm font-medium" title={p.name}>{p.name}</span>
-                      <Badge variant="secondary" className="font-mono text-[10px]">{p.ip}:{p.port}</Badge>
+              {mdnsPrinters.map((p) => {
+                const driverless = (p.txt?.pdl ?? '').split(',').map((s) => s.trim()).includes('application/pdf')
+                return (
+                  <li key={p.uri} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-3 transition-colors duration-200 hover:border-primary/30">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Globe className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className="truncate text-sm font-medium" title={p.name}>{p.name}</span>
+                        <Badge variant="secondary" className="font-mono text-[10px]">{p.ip}:{p.port}</Badge>
+                        {driverless && (
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400"
+                            title="mDNS TXT pdl 含 application/pdf —— 支持 IPP Everywhere 免驱直打（数据来自设备真实通告，非型号猜测）"
+                          >
+                            IPP Everywhere · 免驱
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70" title={p.uri}>{p.uri}</p>
+                      {p.txt?.ty && <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">{p.txt.ty}{p.txt.note ? ` · ${p.txt.note}` : ''}</p>}
                     </div>
-                    <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70" title={p.uri}>{p.uri}</p>
-                    {p.txt?.ty && <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">{p.txt.ty}{p.txt.note ? ` · ${p.txt.note}` : ''}</p>}
-                  </div>
-                  <Button size="sm" variant="outline" disabled={busyKeys.includes(p.uri)} onClick={() => void importFromMdns(p)}>
-                    <Link2 className="size-3.5" aria-hidden />
-                    添加
-                  </Button>
-                </li>
-              ))}
+                    <Button size="sm" variant="outline" disabled={busyKeys.includes(p.uri)} onClick={() => void importFromMdns(p)}>
+                      <Link2 className="size-3.5" aria-hidden />
+                      添加
+                    </Button>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </CardContent>

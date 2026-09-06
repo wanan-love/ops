@@ -1,12 +1,11 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { useOpsStore } from './store'
-import { formatTime } from './widgets'
+import { FadingScrollArea, formatTime } from './widgets'
 import type { OpsEvent } from '@/lib/ops/types'
 import { ScrollText } from 'lucide-react'
 
@@ -55,7 +54,7 @@ export function EventsView() {
         </Select>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="max-h-[36rem] rounded-md border">
+        <FadingScrollArea className="max-h-[36rem] rounded-md border">
           {filtered.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">暂无事件记录</p>
           ) : (
@@ -70,7 +69,7 @@ export function EventsView() {
               ))}
             </ul>
           )}
-        </ScrollArea>
+        </FadingScrollArea>
         <p className="mt-2 text-[11px] text-muted-foreground/70">
           {Object.entries(typeCount)
             .map(([k, v]) => `${k}:${v}`)

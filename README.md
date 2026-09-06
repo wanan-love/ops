@@ -2,10 +2,12 @@
 
 > 跨平台局域网共享打印机 — 设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 设备自动发现并打印。
 
-[![Release](https://img.shields.io/badge/release-v0.2.0--real--backends-emerald)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.3.0--cross--platform-emerald)](../../releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
 [![Backend](https://img.shields.io/badge/print%20backends-IPP%20%7C%20CUPS%20%7C%20Windows-teal)](#打印后端)
 [![Self-Test](https://img.shields.io/badge/self--test-14%2F14%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
+
+> 📖 **新用户从零开始**：安装、配置、共享打印机、客户端打印、故障排查——见完整使用指南 **[docs/USAGE.md](docs/USAGE.md)**。
 
 ## 项目目标
 
@@ -175,8 +177,9 @@ mini-services/ops-host/data/mock-printer/
 └─────────────────────────────────────────────────────────────┘
 ```
 
-详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 协议规范 [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
-虚拟打印机设计 [docs/MOCK_PRINTER.md](docs/MOCK_PRINTER.md) · 原生客户端接入 [docs/NATIVE_CLIENTS.md](docs/NATIVE_CLIENTS.md)
+详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 使用指南 [docs/USAGE.md](docs/USAGE.md) · 协议规范 [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
+虚拟打印机设计 [docs/MOCK_PRINTER.md](docs/MOCK_PRINTER.md) · 原生客户端接入 [docs/NATIVE_CLIENTS.md](docs/NATIVE_CLIENTS.md) ·
+厂商协议研究 [docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md)
 
 ## 目录结构
 
@@ -205,7 +208,7 @@ mini-services/ops-host/data/mock-printer/
 │   ├── build-ios.sh               # Xcode 工程校验/构建（需 macOS）
 │   └── build-web-embed.ts         # Web 资产嵌入清单生成器
 ├── packaging/windows/             # WiX v4 MSI 安装器定义
-├── docs/                          # 架构/协议/虚拟打印机/原生客户端文档
+├── docs/                          # 架构/协议/使用指南/虚拟打印机/原生客户端/厂商协议研究文档
 ├── deploy/                        # Caddy 网关示例
 ├── dist/                          # 构建产物输出（gitignore，Releases 发布）
 ├── Dockerfile  docker-compose.yml # 容器部署（ghcr.io/wanan-love/ops）
@@ -265,7 +268,7 @@ docker compose up -d        # web :3000 + host :3001/:3002 + caddy 网关 :80
 - [x] 10. 真实打印 Backend（IPP ✔ Virtual IPP 全链路验证 / CUPS / Windows 代码完备待宿主验证 / 能力三态 / mDNS / SNMP）
 - [x] 11. 跨平台打包（单文件可执行 + .deb/.AppImage/.msi/.dmg/.apk + CI 自动构建发布）
 - [ ] 12. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS）
-- [ ] 13. 厂商专用能力（仅当标准接口无法满足时研究合法兼容方案）
+- [ ] 13. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾与扫描；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐）
 
 ## License
 

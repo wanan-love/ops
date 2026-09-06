@@ -1,11 +1,87 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { Pause, OctagonX, CircleCheck, CircleDashed, CircleAlert, Loader2, CircleOff, FileText, HelpCircle, MinusCircle, ServerCog } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { ConsumableInfo, InkLevels, JobState, PrintJob, PrinterStatus, TimelineEntry } from '@/lib/ops/types'
 import { BACKEND_LABEL, CAPABILITY_STATE_LABEL, CONSUMABLE_KIND_LABEL, JOB_STATE_LABEL, PRINTER_STATUS_LABEL } from '@/lib/ops/types'
+
+/**
+ * 带底部渐变指示的滚动容器（日志 / 事件 / 任务列表专用）。
+ * 根因修复要点：Radix ScrollArea 的 Viewport 自带 scrollbar-width:none（移动端无任何滚动条提示），
+ * 配合 max-h 截断后用户无法感知“可滚动”——本组件在内容溢出且未滚到底时显示底部渐变 + 计数提示，
+ * 日志只能在自身容器内滚动，绝不撑开父容器或覆盖相邻组件。
+ */
+export function FadingScrollArea({
+  className,
+  wrapperClassName,
+  children,
+  fadeFrom = 'from-card',
+}: {
+  className?: string
+  wrapperClassName?: string
+  children: React.ReactNode
+  fadeFrom?: string
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [fade, setFade] = useState<'none' | 'visible' | 'at-bottom'>('none')
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    const vp = wrap?.querySelector<HTMLElement>('[data-slot=scroll-area-viewport]')
+    if (!wrap || !vp) return
+    const update = () => {
+      const overflow = vp.scrollHeight - vp.clientHeight
+      if (overflow <= 8) {
+        setFade('none')
+      } else if (vp.scrollTop + vp.clientHeight >= vp.scrollHeight - 8) {
+        setFade('at-bottom')
+      } else {
+        setFade('visible')
+      }
+    }
+    update()
+    vp.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(vp)
+    if (vp.firstElementChild instanceof HTMLElement) ro.observe(vp.firstElementChild)
+    return () => {
+      vp.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
+  }, [])
+
+  return (
+    <div ref={wrapRef} className={cn('relative min-w-0', wrapperClassName)}>
+      {/* 根因修复：Radix Viewport 的 height:100% 在 Root 仅有 max-h（无固定 height）时失效，
+          内容会全部展开（clientHeight=scrollHeight）→ 溢出卡片覆盖相邻组件、父容器被撑开。
+          通过 flex-col + Viewport min-h-0 + overflow-y-auto，让 Viewport 在 max-h 约束内收缩并滚动。 */}
+      <ScrollArea className={cn('flex flex-col [&>[data-slot=scroll-area-viewport]]:min-h-0 [&>[data-slot=scroll-area-viewport]]:overflow-y-auto', className)}>
+        {children}
+      </ScrollArea>
+      <div
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 rounded-b-md bg-gradient-to-t to-transparent transition-opacity duration-200',
+          fadeFrom,
+          fade === 'visible' ? 'opacity-100' : 'opacity-0',
+        )}
+      />
+      <span
+        aria-hidden
+        className={cn(
+          'pointer-events-none absolute bottom-1 right-2 z-10 rounded-full bg-muted/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur-sm transition-opacity duration-200',
+          fade === 'visible' ? 'opacity-100' : 'opacity-0',
+        )}
+      >
+        ↓ 滚动查看
+      </span>
+    </div>
+  )
+}
 
 /** 打印后端徽章（Mock / IPP / CUPS / Windows） */
 export function BackendBadge({ backend, className }: { backend: string; className?: string }) {

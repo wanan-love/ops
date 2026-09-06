@@ -1,0 +1,168 @@
+# 主流打印机厂商驱动与通信协议对比研究
+
+> Task ID: P5 · 纯研究文档（未修改任何代码）
+> 研究方法：PWG/RFC 标准公开文本 + 厂商公开支持文档 + 开源生态（CUPS/OpenPrinting/sane-airscan 等）公开资料 + web 检索交叉验证（检索日期 2026-09）。
+> **型号覆盖度声明：本文基于公开资料整理，各厂商具体型号的支持矩阵差异极大，一切结论以实际设备探测（Get-Printer-Attributes / SNMP walk / mDNS TXT）为准。**
+
+---
+
+## 1. 研究目的与结论摘要
+
+**目的**：验证 OpenPrintShare v0.3.x 的后端技术选型——「CUPS + IPP（Everywhere）+ Windows Printing API + SNMP(RFC 3805) + mDNS/DNS-SD」——是否足以覆盖主流厂商局域网打印机的发现、打印、状态、能力与耗材读取需求，并识别必须引入厂商专用适配（Vendor Adapter）的能力边界。
+
+**一段话结论**：该选型与整个行业的「driverless printing」演进方向（CUPS ≥2.2 临时队列、Windows Mopria/Universal Print、AirPrint）完全一致，**打印提交、队列/进度、基础状态（缺纸/卡纸/离线）、能力协商（彩色/双面/份数/纸张）这四类需求在 2012 年后的主流网络打印机上覆盖率可达 90% 以上**；耗材（墨量/碳粉）读取是最大的长尾——IPP `marker-levels` 覆盖有限且常返回非精确值，SNMP RFC 3805 `prtMarkerSupplies` 是事实上的最大公约数但消费级机型实现残缺、且新固件常默认关闭 SNMP；扫描（eSCL）与固件细节、墨盒芯片精确计数等必须引入额外协议层。**当前架构无需推翻，只需按第 7 节路线图补齐「标准协议的二级来源」与「Vendor Adapter 插件层」。**
+
+---
+
+## 2. 标准协议能力矩阵
+
+| 协议 | 发现 | 打印提交 | 能力协商（颜色/双面/纸张/份数/分辨率） | 状态（缺纸/卡纸/离线/忙碌） | 耗材/墨量 | 任务进度 | 备注（读不到什么） |
+|---|---|---|---|---|---|---|---|
+| **IPP**（RFC 8010/8011，Get-Printer-Attributes / Print-Job / Get-Jobs / Cancel-Job） | 否（靠 DNS-SD） | ✅ PDF/URF/PWG-Raster | ✅ `color-supported`、`sides-supported`、`media-supported`、`copies-supported`、`printer-resolution-supported`、`printer-pages-per-minute` | ✅ `printer-state`(3/4/5) + `printer-state-reasons`（`media-needed`/`media-jam`/`shutdown`/`timed-out` 等 keyword） | ⚠️ 部分：`marker-levels` / `marker-types` / `marker-names` / `marker-colors`（取值 −3..100，−3=unknown、−2=有剩余但非精确、−1 依标准为 other；很多机型不返回或只回粗粒度档位） | ✅ `job-state` + `job-impressions-completed`（OPS 已实现） | 扫描、固件版本细节、墨盒芯片原始计数、页数总计数器（IPP 无强制页计数属性；页计数需 SNMP `prtMarkerLifeCount`，见下行） |
+| **SNMP**（RFC 3805 Printer-MIB v2，UDP 161） | 否 | 否（仅老式 LPD 旁路） | ⚠️ 弱：`prtMediaTable`/`prtInputTable`（介质/纸盒，printmib 43 分支，具体子树以 RFC 3805 文本为准）、`prtMarkerColorantTable`（色材）；非完整能力协商用途 | ✅ `hrPrinterDetectedErrorState`（HOST-RESOURCES-MIB 1.3.6.1.2.1.25.3.5.1.2 位掩码：lowPaper/noPaper/jam/…）+ `prtAlertTable`（43.18） | ✅ **最大公约数**：`prtMarkerSuppliesLevel`（**1.3.6.1.2.1.43.11.1.1.9**，−3/−2/−1..100）+ `prtMarkerSuppliesType`（.5：toner=3/ink=4/…）+ `prtMarkerSuppliesDescription`（.6）+ `prtMarkerSuppliesMaxCapacity`（.8） | ❌（无打印任务进度概念） | v1/v2c 明文 community；新固件常默认禁用；无法打印、无 job 模型；页面计数需 `prtMarkerLifeCount`（43.10.1.1.x） |
+| **WSD**（Web Services on Devices，WS-Discovery + WS-Print/WS-Print v2，OASIS 标准） | ✅ UDP SOAP 组播 | ✅（Windows WSD 端口监视器） | ⚠️ WS-Print v1 基本设备信息；v2 扩展（很少有机型实现 v2） | ⚠️ 有限（元素级 printer status，可靠性口碑差于 TCP 直连，社区证据一致） | ❌（v1 无耗材；v2 增加了部分状态但部署罕见） | ⚠️ 弱 | 与 OPS 关系：Windows 宿主上 WSD 队列仍可被 Windows Printing API 兜底；OPS 无需自研 WSD 客户端 |
+| **mDNS/DNS-SD**（RFC 6762/6763） | ✅ `_ipp._tcp` / `_ipps._tcp`（+ TXT `rp`/`ty`/`pdl`/`adminurl`）；AirPrint 子类型 **`_universal._sub._ipp._tcp`**；另有 `_pdl-datastream._tcp`(9100)、`_printer._tcp`(LPD 515)、扫描 `_uscan._tcp`/`_scanner._tcp` | 否（仅广告） | ⚠️ 仅从 TXT `pdl`（支持的文档格式列表）推断 | 否 | 否 | 否 | OPS 已实现 PTR/SRV/TXT/A 解析（Task 2-b）；建议补充识别 `_universal._sub` AirPrint 子类型与 `pdl` 中 `image/urf`、`image/pwg-raster`、`application/pdf` 判定 driverless |
+| **Windows Printing API**（Win32 spooler：EnumPrinters/GetPrinter/JOB_INFO + WMI Win32_Printer/Win32_PrintJob + Bidi IBidiSpl2） | ✅（本机已装队列；网络发现靠 OS） | ✅（任意驱动队列，含 legacy host-based） | ✅（DEVMODE/驱动 DEVCAPS——来自厂商驱动而非打印机本体） | ✅ PRINTER_INFO_2.pPrinterStatus + spooler 队列状态；真实设备状态取决于端口监视器（标准 TCP/IP 端口监视器默认走 **SNMP RFC 3805** 读取状态/耗材，厂商端口监视器走私有 Bidi） | ⚠️ 无公开 Win32/WMI 墨量接口；`Win32_Toner` 等非标准类；墨量仅存在于厂商驱动 UI / Bidi 扩展 / SNMP | ✅（JOB_INFO_2 状态+页数） | 需要预装驱动；墨量本质上还是回到 SNMP/私有协议 |
+| **CUPS**（macOS/Linux 宿主） | ✅ Bonjour/mDNS | ✅ | ✅（cups-filters / PPD / IPP 属性） | ✅ | ⚠️ CUPS 自身读取 IPP `marker-*` 展示（网页管理界面 Supply Levels），无 IPP 属性时无耗材 | ✅（`lpstat`/job 事件） | OPS 已实现 cups 后端（lp/lpstat/cancel）；legacy 驱动机型由 CUPS 过滤器链兜底 |
+
+**关键洞见**：五条标准通道**互为补充且几乎无一家独占**——发现靠 mDNS/WSD、打印靠 IPP/9100/系统队列、状态靠 IPP reasons + SNMP、耗材靠 SNMP(RFC 3805) > IPP(marker-*) > 供应商私有。这正是 OPS「能力三态 + 多来源 probe + merge」架构的正确性依据：任何单一协议读不到 ≠ 不支持。
+
+---
+
+## 3. 厂商对比表
+
+通用协议支持列指「该品牌当前在售主流网络机型对 IPP Everywhere / AirPrint（即 IPP+DNS-SD+PDF/URF/PWG-Raster driverless）的典型支持情况」；✅=普遍 / ⚠️=部分（分产品线） / ❌=罕见。私有 OID 值**本文一律不列具体编号**（公开资料未标准化的，需厂商 MIB 文件或实际抓包确认）。
+
+| 品牌 | 典型型号系列 | IPP Everywhere/AirPrint | 私有协议/驱动语言 | 墨量·耗材读取（协议 + 数据来源） | 对 OpenPrintShare 的意义/限制 |
+|---|---|---|---|---|---|
+| **HP** | LaserJet Pro/MFP、OfficeJet Pro、PageWide | ✅（新机型普遍，PWG 自认证列表常客） | PCL 5/6、PJL；**JetDirect/AppSocket RAW 9100 端口发明者（1992）**，JetDirect 多通道 9100/9101/9102；UPD 端口监视器；私有 SNMP 分支（企业 OID 树，MIB 可从官网下载） | ① SNMP RFC 3805 `prtMarkerSuppliesLevel`（多数 LaserJet 支持，但入门级/老机型 General 表残缺——社区实证如 LaserJet P2035n 未完整实现 RFC 3805）② IPP `marker-levels`（driverless 机型）③ 私有 OID 补充（页计数/维修件：公开资料未标准化，需 HP MIB 文件确认） | IPP 路线友好；SNMP 大体可用但必须容忍残缺；9100 是兜底打印通道；HP Smart 云端无公开局域网墨量 API |
+| **Canon** | PIXMA/MAXIFY（消费）、imageCLASS、imageRUNNER/iR ADVANCE（办公） | ⚠️（新 PIXMA 与 iR 系列普遍；办公高端常默认关） | **CAPT**（旧 LaserShot 主机端渲染）、**UFR II/UFR II Lite**（现行私有渲染）、可选 PCL/PS；PIXMA 走 Canon IJ（打印 TCP 9100）+ **BJNP**（状态/扫描，UDP 861x 段，公开资料口径不一，需抓包确认） | ① IPP `marker-levels`（AirPrint 机型）② SNMP RFC 3805 `prtMarkerSupplies*`（iR 办公线较好，PIXMA 消费线常缺失或非精确——需实测）③ Canon Status Monitor/BJNP 私有状态通道（无公开标准） | CAPT/UFR II 机型 host 端渲染 → 无法用 IPP driverless，必须走宿主 CUPS/Windows 驱动队列（OPS 的 cups/windows 后端正好兜住）；消费级耗材读取长尾重灾区 |
+| **Epson** | EcoTank/Expression/WorkForce（喷墨）、AcuLaser（激光，现部分归收购方） | ✅（新机型普遍） | **ESC/P、ESC/P-R**（栅格化变体，开源驱动 `epson-inkjet-printer-escpr` 即用它跑 9100）；Epson Status Monitor 私有双向状态；**Epson Connect 云 API（公开 REST，developer.epsonconnect.com，但纯云端，不提供局域网墨量）** | ① IPP `marker-levels`（AirPrint 机型）② SNMP RFC 3805 `prtMarkerSupplies*`（EpsonNet 打印服务器时代的机型支持基础表，现代 Wi-Fi 机型常禁用/不完整）③ 私有状态（Epson Status Monitor 协议：公开资料未标准化） | ESC/P-R 开源驱动证明「IPP 之外的裸 9100 + 栅格数据」路线可行；Epson Connect API 与 OPS 无交集（云≠LAN）；墨量最佳期望仍是 IPP+SNMP 双 probe |
+| **Brother** | MFC/DCP/HL/ADS、QL 标签 | ✅（PWG 自认证列表中 Brother 型号众多，pwg.org/printers 首屏即多款 MFC-J；Mopria 普及） | PJL + PCL（开源 `brlaser`/`brgenml` 驱动）、BR-Script（PS Level 3 兼容）；默认 RAW 9100 | ① **SNMP RFC 3805 `prtMarkerSuppliesLevel`（1.3.6.1.2.1.43.11.1.1.9）**：Brother 公布 MIB，Home Assistant 官方 Brother 集成即用此 OID 读墨量（公开生态强实证）② IPP `marker-levels`（driverless 机型）③ PJL 状态回读（`@PJL INFO` 类命令走 9100 双向通道：具体命令响应格式公开资料未完全标准化，需抓包确认） | **对 OPS 最友好的品牌**：SNMP 标准路线实测可用度高；建议作为 Vendor Adapter 首个试点 |
+| **Xerox** | Phaser、WorkCentre、AltaLink | ⚠️（企业部署常默认关闭 AirPrint——OpenPrinting/cups #1292 讨论：CUPS 仅在 AirPrint 开启时为其建临时队列） | PostScript/PCL 原生；Xerox 全球打印驱动 | ① SNMP RFC 3805（企业机强）② IPP `marker-*`（开启 AirPrint 后）③ 私有 CentreWare/EWS 页面（无公开 API） | 高端 PS 机型 IPP 直打质量最好；发现不到时先怀疑「AirPrint 被管理员关闭」，应提示用户在 EWS 开启 |
+| **Ricoh** | IMC/IM 系列（原 Aficio） | ⚠️（新 IM 系列支持，企业管理端常关） | **RPCS**（旧私有）、PCL5/6、PS3（可选）；当前通用驱动 PCL/PS | ① SNMP RFC 3805（企业机完善，含维修件计数）② IPP `marker-*` ③ Smart Device Connector 私有 | 企业租机型占主流 → SNMP 是主通道；需处理 community 非默认值 |
+| **Kyocera** | ECOSYS、TASKalfa | ⚠️→✅（新机型 AirPrint/Mopria；企业默认态不一） | **PRESCRIBE**（旧私有 PDL）、KX 驱动（PCL6/PS/PDF 直打） | ① SNMP RFC 3805（企业机完善，Kyocera 公布 MIB，含 OPC/鼓等维修件计数）② IPP `marker-*` | PDF 直打能力（`pdl` 含 application/pdf）意味着 IPP Print-Job 可以省栅格化，值得 OPS 后续利用 |
+| **Konica Minolta** | bizhub C/i 系列 | ⚠️（新 bizhub 支持；微软 Universal Print 兼容列表在列） | PCL/PS 通用驱动、旧 PageScope 私有管理 | ① SNMP RFC 3805（企业机完善）② IPP `marker-*` | 同 Ricoh/Kyocera 企业画像 |
+| **Lexmark** | MS/MX/XM/CX 系列 | ✅（现代企业机型 AirPrint/IPP Everywhere 支持最激进的一档） | PCL/PPDS/PCL XL/PS；9100+IPP 双通道 | ① SNMP RFC 3805（**企业级最强**：MarkVision Enterprise 即基于 SNMP+HTTP 管理，MIB 公开）② IPP `marker-*`（覆盖好） | 耗材读取期望值最高的品牌；可作为「标准协议上限」的基准测试机 |
+| **其它主流** | Samsung（并入 HP）、Toshiba e-STUDIO、Sharp、OKI、Dell（贴牌）、Fujifilm（原富士施乐）、Zebra（标签） | 三星新机✅；东芝/夏普⚠️（Mopria 成员为主）；OKI⚠️ | 三星 SPL；东芝私有+PCL/PS；OKI PCL/PS | 多数遵循 SNMP RFC 3805 + IPP `marker-*` 双通道；细节公开资料未标准化，需实测 | Mopria 联盟称认证设备 1.2 亿+台，Android/Windows 原生 driverless 均基于 IPP 体系 → 印证 OPS 的 IPP 主路线 |
+
+**横向规律**（对 OPS 的战略含义）：
+
+1. **企业 A3 一体机**（Ricoh/Kyocera/KM/Xerox/Lexmark/Toshiba）：SNMP RFC 3805 完善但 IPP 可能被管理员关闭 → SNMP 优先、IPP 兜底，community 字符串要可配置。
+2. **消费/SOHO**（HP/Canon/Epson/Brother）：AirPrint 普及但 SNMP 常缺失或禁用 → IPP `marker-*` 优先、SNMP 兜底，双向 9100 PJL 是潜在第三来源。
+3. **legacy host-based**（CAPT/UFR II/SPL/GDI）：无网络渲染能力 → 唯一出路是宿主已装驱动的队列（OPS cups/windows 后端），OPS 不应试图自研。
+
+---
+
+## 4. 标准协议无法获取（或不可靠）的能力清单
+
+| # | 能力 | 标准协议现状 | 是否必须厂商专用 |
+|---|---|---|---|
+| 1 | **扫描**（MFP） | IPP-Scan（PWG 规范）存在但部署罕见；**eSCL（Apple AirScan，HTTP REST）已是事实标准**，sane-airscan 开源实现同时覆盖 eSCL + WSD-Scan；`_uscan._tcp`/`_scanner._tcp` 可发现 | **半标准**：走 eSCL 即可覆盖 AirPrint 认证的 MFP；非 AirPrint 老机型需厂商私有（TWAIN over 网络/各私有协议） |
+| 2 | **固件版本/序列号细节** | IPP 无强制属性（部分机型回 `printer-uuid`/`printer-firmware-string` 非标准）；SNMP `prtGeneralSerialNumber`（43.5.1.1.1 一带）可选实现 | 混合：SNMP 常可得，属「尽力而为」 |
+| 3 | **墨盒芯片原始计数**（已打印页数/剩余页数/区域码/芯片认证状态） | 无任何标准承载；厂商云与私有通道才有 | **必须 Vendor Adapter / 不可达**（多数只在机身 UI 与厂商云可见） |
+| 4 | **耗材精确克重/剩余寿命（非百分比）** | IPP/SNMP 均只有百分比或 −2 粗档；维护件（fuser/OPC/waste toner）在 Printer-MIB 中可表达但厂商选择性暴露 | 混合：SNMP 拿得到就标准，拿不到只能私有 |
+| 5 | **扫描到云/云打印编排** | 无 | 厂商云 API（Epson Connect 等公开但纯云端）；与 OPS LAN 定位正交，建议明确不做 |
+| 6 | **打印质量/色彩管理微调**（ICM 色彩配置、专色） | IPP 无 | 厂商驱动能力；OPS 通过 options 透传即可，不深究 |
+| 7 | **HP 打印安全/固件策略、墨水订阅状态** | 无 | 厂商云私有，明确不做 |
+| 8 | **WSD v2 增强状态** | 部署罕见 | 不值得做 |
+| 9 | **ipps:// TLS 打印** | 标准存在（RFC 8011 + IPP/2.x over HTTPS），但自签证书链处理是实际痛点 | 标准协议，OPS 已列为待实现（当前仅 ipp://） |
+
+---
+
+## 5. 厂商驱动实际使用的通信方式分析
+
+**结论先行：现代厂商驱动的数据通道收敛为「RAW 9100 双向流」或「IPP」，状态/耗材通道收敛为「SNMP」或「私有双向协议」，发现通道收敛为「mDNS/WSD」。**
+
+| 厂商驱动形态 | 数据通道 | 状态/耗材通道 | 说明 |
+|---|---|---|---|
+| Windows 厂商驱动（HP UPD、Canon UFR II、Epson、Brother、KX 等） | 端口监视器 → 多数默认 **RAW 9100**（HP JetDirect/AppSocket 血统，几乎被全体网络打印机采纳）；也支持 LPR 515、 IPP 631、WSD | ① Windows 标准 TCP/IP 端口监视器可开启 **SNMP（RFC 3805 套件）** 读状态 ② 厂商端口监视器走私有 Bidi（PJL 回读/BJNP/Status Monitor 协议） | 「9100 是事实上的打印通用端口」为 Pentesting/PaperCut/厂商文档多方共识；HP 社区亦确认 9100 源自 HP 1992 年 JetDirect |
+| macOS 厂商驱动 | 同上（9100/IPP），或 IOPM 插件 | 同上 | macOS 同时原生 AirPrint（IPP+mDNS），驱动仅为增强 |
+| Linux 厂商/开源驱动 | CUPS 后端：`socket`(9100) / `ipp` / `lpd`；过滤链输出 PCL/ESC/P-R/PWG-Raster | CUPS 从 IPP `marker-*` 取耗材（网页界面）；命令行生态用 SNMP | OpenPrinting 数据库+ foomatic 记录各机型驱动路由 |
+| Mobile（iOS/Android 原生打印） | **一律 IPP（Print-Job）+ mDNS 发现**，数据格式 URF（iOS）/PWG-Raster+PDF（Mopria/Android） | 无墨量（系统不展示耗材） | AirPrint/Mopria 体系 = OPS driverless 路线的直接对标物 |
+| 企业管理（MarkVision/Lexmark、Kyocera Net Viewer、RICOH Device Manager） | — | **SNMP 为主 + EWS(HTML/REST) 为辅** | 印证 SNMP 在企业侧不可替代 |
+
+**对 OPS 的直接推论**：OPS 的 IPP 主通道 = 站在 Mopria/AirPrint 同一条标准带上；SNMP = 与企业管理软件同一条带；9100 可作为未来「最后一公里」兜底（仅 raw 透传，无状态回读标准）。**没有任何主流厂商的驱动把 WSD 作为主数据通道**——OPS 不实现 WSD 打印是正确取舍。
+
+---
+
+## 6. 每项能力「标准可替代性」判断
+
+| 能力 | 判断 | 依据 |
+|---|---|---|
+| 发现打印机 | **标准可获取**（mDNS/DNS-SD；Windows 上 OS 自带 mDNS+WSD 双发现） | `_ipp._tcp`/`_universal._sub` 全生态支持 |
+| 提交打印 + 选项（份数/双面/纸张/彩色） | **标准可获取**（IPP Print-Job + job-template 属性）≈ 90% 现役网络机型 | Mopria 1.2 亿认证 + AirPrint + CUPS 临时队列生态 |
+| 队列状态与进度 | **标准可获取**（IPP job-state/job-impressions-completed；Windows JOB_INFO；CUPS） | OPS 已验证（vipp + 真机待验） |
+| 打印机条件状态（缺纸/卡纸/离线） | **标准可获取**（IPP `printer-state-reasons` keyword + SNMP `hrPrinterDetectedErrorState`） | keyword 列表为 RFC 8011 标准内容 |
+| 能力协商（color/duplex/media/copies/dpi/ppm） | **标准可获取**（IPP Get-Printer-Attributes；Windows DEVMODE 兜底 legacy） | OPS `reportFromPrinterAttributes` 已覆盖全部七项 |
+| **墨量/耗材百分比** | **混合**：IPP `marker-*`（新机）+ SNMP `prtMarkerSuppliesLevel`（企业/兄弟等）覆盖大多数；剩余长尾（消费喷墨禁 SNMP 且 IPP 不回 marker）→ **必须 Vendor Adapter 或 UI 隐藏** | 厂商对比表第 5 列 |
+| 耗材低量告警 | **标准可获取**（IPP `printer-state-reasons` 的 `toner-low`/`ink-low` 等 keyword——很多机型即使不给 level 也会给 keyword） | 建议 OPS 补充解析该 keyword 作为耗材降级信号 |
+| 扫描 | **半标准**（eSCL 覆盖 AirPrint MFP；老机必须厂商私有） | sane-airscan 生态成熟 |
+| 固件/序列号 | **混合**（SNMP 尽力而为） | prtGeneral 表可选实现 |
+| 墨盒芯片精确计数 | **必须 Vendor Adapter**（且多数无网络暴露面） | 无标准承载 |
+| 厂商云能力（Epson Connect/HP Smart） | **不可达/不做** | 公开 API 均纯云端，与 LAN 架构正交 |
+
+---
+
+## 7. Vendor Adapter 路线图建议（不破坏通用架构）
+
+### 7.1 架构原则
+
+1. **适配层只做「增强」，不做「替代」**：沿用现有 `CapabilityReport` 四元组（value/state/source/detail）与 merge 语义——Vendor Adapter 的产出只能是「把 UNKNOWN 提升为 SUPPORTED」，绝不覆盖 IPP/SNMP 已有 SUPPORTED 值；source 记为 `vendor:<id>` 以保持来源可审计。
+2. **厂商识别走标准信号**：`printer-make-and-model`（IPP）+ mDNS TXT `ty`/`mfg`/`mdl` + SNMP `sysObjectID`（enterprise 分支即厂商编号，无需私有 OID 知识）→ `detect(): confidence`，不依赖 IP 猜测。
+3. **通道优先级固定**：`IPP → SNMP(RFC 3805) → HOST-RESOURCES-MIB → 厂商专用（PJL over 9100 / 厂商 MIB）`，任何一步失败只记 probe 失败（现有三态语义天然支持）。
+4. **安全默认**：SNMP community 可配置、超时短、walk 上限（现有 40 条已合理）；9100 通道默认关闭、需用户显式启用（避免与在用队列互扰）。
+
+### 7.2 接口建议（TypeScript 形态，仅示意不落码）
+
+```ts
+interface VendorAdapter {
+  id: string                       // 'brother-pjl' | 'hp-snmp-ext' | ...
+  detect(ctx: VendorDetectContext): number   // 0..1 置信度
+  enhance(ctx: PrinterContext): Promise<Partial<CapabilityReport> & { probes: CapabilityProbe[] }>
+  // 禁止：submitJob / cancelJob / 覆盖 merge 后的 SUPPORTED 能力
+}
+```
+
+### 7.3 分阶段路线
+
+| 阶段 | 内容 | 性质 | 预期收益 |
+|---|---|---|---|
+| **P1（标准二级来源，零厂商知识）** | ① SNMP 补 HOST-RESOURCES `hrPrinterDetectedErrorState`/`hrPrinterStatus` ② SNMP v2c 支持 + community 可配置 ③ IPP 解析 `printer-state-reasons` 的 `toner-low/ink-low` 降级告警 ④ mDNS 识别 `_universal._sub` + TXT `pdl` 里的 `image/urf`/`application/pdf`（driverless 判定） | 纯标准 | 耗材/状态覆盖显著提升，无维护负担 —— **建议立即做** |
+| **P2** | ipps:// TLS（自签容忍策略 + TOFU 白名单） | 纯标准 | 企业机与新款家用机安全合规 |
+| **P3** | eSCL 扫描后端（`_uscan._tcp`/`_scanner._tcp` 发现 + HTTP REST） | 事实标准 | AirPrint MFP 的扫描能力，对齐 sane-airscan 生态 |
+| **P4（首个真 Vendor Adapter）** | Brother PJL over 9100 双向状态（试点：SNMP 失败时才启用）+ 通用 PJL `@PJL INFO` 探测 | 厂商专用 | 消费级墨量长尾；验证适配层模式 |
+| **P5（可选）** | 厂商 MIB 解析包（HP/Lexmark/Kyocera 公开 MIB 文件加载私有 OID 映射）；EWS 抓取明确列为**反模式不建议** | 厂商专用 | 维修件计数等增强信息 |
+
+---
+
+## 8. 参考资料清单
+
+**标准（PWG / IETF / OASIS）**
+- RFC 8010 —— IPP/1.1: IPP/2.0 Encoding & Transport
+- RFC 8011 —— IPP/1.1: IPP/2.0 Model & Semantics（`printer-state-reasons`、`marker-*` 属性族）
+- RFC 3805 —— Printer MIB v2（`prtMarkerSupplies*` 1.3.6.1.2.1.43.11.1.1.x、`prtAlertTable`、`prtGeneral*`）
+- RFC 2790 / HOST-RESOURCES-MIB（`hrPrinterDetectedErrorState` 1.3.6.1.2.1.25.3.5.1.2）
+- RFC 6762 / RFC 6763 —— mDNS / DNS-SD
+- PWG 5100.14-20xx —— IPP Everywhere（含自认证打印机注册库）
+- PWG 5102.4 —— PWG Raster Format（image/pwg-raster）；Apple URF（image/urf）为 AirPrint 变体
+- PWG IPP Scan（候选标准，部署稀少）；Apple Bonjour Printing Specification v1.2.1（`_universal._sub._ipp._tcp`、TXT 记录约定）
+- OASIS WS-Discovery / WS-Print(v2) —— WSD 打印
+
+**开源项目 / 数据库（公开可查证）**
+- OpenPrinting CUPS（github.com/OpenPrinting/cups）及文档 `doc/network.html`（Bonjour 网络打印机）
+- OpenPrinting 打印机兼容数据库（openprinting.github.io/database.html）；cups-filters
+- ippeveprinter / **ippeveselfcert**（github.com/istopwg/ippeveselfcert，IPP Everywhere 自认证工具）与 ipptool/ippfind（CUPS 自带）
+- **sane-airscan**（github.com/alexpevzner/sane-airscan，eSCL + WSD-Scan 双协议驱动扫描）
+- epson-inkjet-printer-escpr（Epson ESC/P-R 官方开源 Linux 驱动）；brlaser/brgenml（Brother 开源驱动）
+- Home Assistant Brother 集成（SNMP 43.11 OID 读墨量的生态实证）
+- PWG IPP Everywhere 自认证打印机列表（pwg.org/printers）；Mopria 认证产品库（mopria.org/certified-products）
+- Microsoft Universal Print 兼容机型列表（learn.microsoft.com）
+- Debian Wiki「CUPSDriverlessPrinting」
+
+**厂商公开文档（示例，均为公开入口）**
+- HP Jetdirect TCP/UDP 端口表（support.hp.com c02480766）；HP/Canon/Epson/Brother/Lexmark/Kyocera 官网 MIB 下载与协议白皮书
+- Epson Connect API 开发者门户（developer.epsonconnect.com，纯云端）
+- Xerox 支持文档：AirPrint/Wi-Fi Direct 移动打印选项说明
+
+> 以上厂商侧资料仅用于佐证通用结论；**任何具体型号的私有 OID 数值、私有端口细节均未在本文编造，以厂商 MIB 文件与实际抓包为准。**

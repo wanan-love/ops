@@ -6,14 +6,13 @@ import { Download, FileText, History, ListFilter, RotateCcw, Sheet, X } from 'lu
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet as SheetUI, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
-import { EmptyState, FileLabel, JobProgress, JobStateBadge, TimelineList, formatBytes, formatDuration, formatTime } from './widgets'
+import { EmptyState, FadingScrollArea, FileLabel, JobProgress, JobStateBadge, TimelineList, formatBytes, formatDuration, formatTime } from './widgets'
 import { loadDevice } from '@/lib/ops/device'
 import type { PrintJob } from '@/lib/ops/types'
 
@@ -123,7 +122,7 @@ export function QueueView() {
           </div>
 
           {/* ≥md：表格布局（列宽随断点收紧，确保 768px 容器内完整可见，无需横向滚动） */}
-          <ScrollArea className="hidden max-h-[32rem] rounded-md border md:block">
+          <FadingScrollArea className="max-h-[32rem] rounded-md border" wrapperClassName="hidden md:block">
             <Table className="w-full table-fixed min-w-0 [&_th]:h-11 [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide [&_td]:py-3">
               <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
                 <TableRow className="hover:bg-transparent">
@@ -210,7 +209,7 @@ export function QueueView() {
                 })}
               </TableBody>
             </Table>
-          </ScrollArea>
+          </FadingScrollArea>
 
           {/* <md：卡片列表（每张卡完整可见，无需横向滚动，触控目标 ≥44px） */}
           <div className="max-h-[32rem] space-y-2 overflow-y-auto rounded-md border p-2 [scrollbar-width:thin] md:hidden">

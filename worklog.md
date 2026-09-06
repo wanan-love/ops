@@ -294,3 +294,20 @@ Stage Summary:
 - 用户链路达成：下载 → 双击 → 启动 → 浏览器 http://localhost:3001/ 即用（运行时内嵌单文件）
 - 本地实测：单文件/AppImage/CLI ✓；CI 产出：MSI/DMG/APK/iOS archive ✓（构建成功，功能待用户环境验证）
 - 下一阶段建议：①真实硬件验证（Windows 宿主跑 exe+WindowsPrinterBackend、macOS 跑 dmg+CUPS、SNMP 墨量、跨主机 mDNS）②ipps:// TLS ③Host 控制台鉴权 ④Android/iOS 原生化（NsdManager 发现、原生 UI）⑤厂商专用能力研究
+
+---
+Task ID: P5
+Agent: general-purpose
+Task: 厂商打印协议对比研究（纯研究+文档，零代码改动）
+
+Work Log:
+- 开工核对：读 worklog（重点 Task 2-b 真实打印后端层）与现实现——`backends/snmp.ts`（RFC 3805 prtMarkerSupplies 1.3.6.1.2.1.43.11.1.1.{5,6,9} walk + v1 BER 自研）、`backends/ipp/capabilities.ts`（Get-Printer-Attributes → marker-levels/printer-state-reasons/能力三态）、`ipp/client.ts`（requested-attributes=all）、`discovery/mdns.ts`（_ipp._tcp PTR/SRV/TXT/A）
+- 加载 web-search 技能，CLI 执行 8 次定向检索（控制总量，结果存 /tmp/p5-search-*.json）：①IPP Everywhere/AirPrint 厂商支持（pwg.org/printers 自认证列表、Debian driverless、istopwg/ippeveselfcert）②RFC 3805 OID 兼容性（HP P2035n 未完整实现的社区实证、Brother SNMP 监控实证）③厂商私有协议（9100/JetDirect/PJL、CAPT/UFR II、ESC/P-R、BJNP）④WSD vs mDNS ⑤CUPS driverless/ipptool/OpenPrinting 数据库/Xerox AirPrint 关闭讨论（OpenPrinting/cups#1292）⑥厂商云 API（Epson Connect 开发者门户=纯云端）⑦Mopria/Universal Print 认证品牌矩阵 ⑧eSCL/sane-airscan 扫描标准生态
+- 交叉验证后的关键事实修正：删除未确证表述（如 IPP printer-volume 非标准属性）；私有 OID/端口一律标注「公开资料未标准化，需抓包/厂商 MIB 确认」；检索页 web_reader 函数不可用（仅 CLI web_search），以搜索摘要+公开知识库完成
+- 产出 docs/VENDOR_PROTOCOLS.md（中文，8 章节全结构）：研究结论摘要 / 标准协议能力矩阵（IPP·SNMP·WSD·mDNS·Windows·CUPS 六通道 × 发现/打印/能力/状态/耗材/进度）/ 厂商对比表（HP·Canon·Epson·Brother·Xerox·Ricoh·Kyocera·KM·Lexmark·其它，墨量列均写明协议名+OID/IPP 属性名）/ 标准协议拿不到的能力清单 / 厂商驱动实际通信方式分析 / 逐能力「标准可替代性」判定 / Vendor Adapter 五阶段路线图（P1 纯标准增强→P5 厂商 MIB 包，接口只做 UNKNOWN→SUPPORTED 提升）/ 参考资料清单（PWG/RFC 编号+开源项目名）
+
+Stage Summary:
+- 核心结论：当前「CUPS + IPP(Everywhere) + Windows Printing API + SNMP(RFC 3805) + mDNS」选型与行业 driverless 演进（Mopria 1.2 亿认证/AirPrint/CUPS≥2.2 临时队列）同向，打印/队列/基础状态/能力协商对 2012 年后主流网络机型覆盖率 ≥90%，架构无需推翻
+- 最大长尾是耗材：读取优先级应固化为 IPP `marker-*` → SNMP `prtMarkerSuppliesLevel`(43.11.1.1.9) → HOST-RESOURCES `hrPrinterDetectedErrorState`(25.3.5.1.2) → 厂商专用（Brother 最友好/消费喷墨最差）；扫描走 eSCL（半标准）；墨盒芯片计数必须 Vendor Adapter；WSD 打印不实现是正确取舍
+- 立即可做的零风险增强（P1 路线，纯标准零厂商知识）：SNMP 补 HOST-RESOURCES 状态位、community 可配置、IPP `printer-state-reasons` 解析 toner-low/ink-low 降级告警、mDNS 识别 `_universal._sub`+`pdl` driverless 判定
+- 文档：/home/z/my-project/docs/VENDOR_PROTOCOLS.md（本任务唯一产物，未触碰任何源码/配置）

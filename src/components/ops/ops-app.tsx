@@ -96,12 +96,37 @@ export default function OpsApp() {
 
   const goto = useCallback((v: TabValue) => setTab(v), [])
 
+  // 导航横向滚动渐变指示：告知两侧还有未显示的 tab（避免"被截断"观感）
+  const tablistRef = useRef<HTMLDivElement>(null)
+  const [navFade, setNavFade] = useState({ left: false, right: false })
+  useEffect(() => {
+    const el = tablistRef.current
+    if (!el) return
+    const update = () => {
+      const canScroll = el.scrollWidth - el.clientWidth > 4
+      setNavFade({ left: canScroll && el.scrollLeft > 4, right: canScroll && el.scrollLeft + el.clientWidth < el.scrollWidth - 4 })
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
+  }, [])
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <Header />
       <nav aria-label="主导航" className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto w-full max-w-6xl px-4">
-          <div role="tablist" aria-label="功能区域" className="flex gap-1 overflow-x-auto py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="relative mx-auto w-full max-w-6xl px-4">
+          <div
+            ref={tablistRef}
+            role="tablist"
+            aria-label="功能区域"
+            className="flex gap-1 overflow-x-auto py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {TAB_ITEMS.map((item) => {
               const active = tab === item.value
               return (
@@ -111,7 +136,7 @@ export default function OpsApp() {
                   aria-selected={active}
                   onClick={() => setTab(item.value)}
                   className={
-                    'relative flex min-h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 ' +
+                    'relative flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 ' +
                     (active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground')
                   }
                 >
@@ -127,6 +152,14 @@ export default function OpsApp() {
               )
             })}
           </div>
+          <div
+            aria-hidden
+            className={'pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-background to-transparent transition-opacity duration-200 ' + (navFade.left ? 'opacity-100' : 'opacity-0')}
+          />
+          <div
+            aria-hidden
+            className={'pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background to-transparent transition-opacity duration-200 ' + (navFade.right ? 'opacity-100' : 'opacity-0')}
+          />
         </div>
       </nav>
 

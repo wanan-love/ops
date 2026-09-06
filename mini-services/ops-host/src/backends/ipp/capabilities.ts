@@ -131,19 +131,25 @@ export function reportFromError(source: CapabilitySource, error: string, duratio
  * Get-Printer-Attributes 响应 → 打印机状态映射。
  * printer-state: 3 idle → online / 4 processing → busy / 5 stopped → 按 reasons 细分。
  * reasons：media-needed|media-empty → paper-out；media-jam → paper-jam；shutdown|connecting-to-device|timed-out → offline；其它非 none → error。
+ * 耗材告警（toner/ink/marker-supply 的 low|empty，RFC 8011 warning 级）不影响打印可用性，
+ * 附加到 message 提示（不改变 status，不猜测剩余百分比）。
  */
+const SUPPLY_WARN_RE = /^(toner|ink|marker-supply)-(low|empty)$/
+
 export function statusFromPrinterAttributes(msg: IppMessage): { status: PrinterStatus; message: string } {
   const state = attrInt(findAttr(msg, 'printer-state')) ?? 0
   const reasons = attrStrs(findAttr(msg, 'printer-state-reasons')).map((r) => r.replace(/^printer-/, ''))
   const stateMessage = attrStr(findAttr(msg, 'printer-state-message')) ?? ''
   const makeAndModel = attrStr(findAttr(msg, 'printer-make-and-model')) ?? ''
   const suffix = makeAndModel ? `（${makeAndModel}）` : ''
+  const supplyWarn = reasons.filter((r) => SUPPLY_WARN_RE.test(r))
+  const supplySuffix = supplyWarn.length > 0 ? `（耗材告警：${supplyWarn.join(',')}）` : ''
 
   if (state === 3) {
-    return { status: 'online', message: stateMessage || `IPP printer-state=idle${suffix}` }
+    return { status: 'online', message: stateMessage || `IPP printer-state=idle${suffix}${supplySuffix}` }
   }
   if (state === 4) {
-    return { status: 'busy', message: stateMessage || `IPP printer-state=processing${suffix}` }
+    return { status: 'busy', message: stateMessage || `IPP printer-state=processing${suffix}${supplySuffix}` }
   }
   if (state === 5) {
     for (const reason of reasons) {
