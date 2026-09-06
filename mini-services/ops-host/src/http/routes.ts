@@ -245,6 +245,102 @@ export function buildRouter(): Router {
     sendJson(res, 200, { ok: true, printer: snapshot })
   })
 
+  // ---------------------------------------------------------------- 扫描（P3 · eSCL）
+
+  router.get('/api/scan/devices', async (ctx, _req, res) => {
+    const devices = await ctx.scan.listDevices(ctx.vscan)
+    sendJson(res, 200, { devices })
+  })
+
+  /** mDNS 实时扫描 _uscan._tcp（组播不可用返回空 + 说明，不算错误） */
+  router.post('/api/scan/devices/scan-mdns', async (ctx, _req, res) => {
+    if (!ctx.mdns.isAvailable()) {
+      return sendJson(res, 200, { devices: [], available: false, note: ctx.mdns.note() || 'mDNS 不可用（组播 socket 未绑定）' })
+    }
+    const devices = await ctx.scan.mdnsScan(ctx.vscan)
+    sendJson(res, 200, { devices, available: true, note: ctx.mdns.note() })
+  })
+
+  router.post('/api/scan/devices', async (ctx, _req, res, _params, _query, body) => {
+    const input = parseJsonBody<{ baseUrl?: string; name?: string }>(body)
+    if (!input?.baseUrl) return sendError(res, 400, '请求体必须包含 baseUrl 字段（如 http://192.168.1.50:8080）')
+    try {
+      const device = await ctx.scan.addDevice(String(input.baseUrl).slice(0, 300), input.name ? String(input.name).slice(0, 80) : undefined)
+      sendJson(res, 201, { device })
+    } catch (err) {
+      // 探活失败（连接拒绝 / 超时 / 非 eSCL 端点）→ 400
+      sendError(res, 400, `扫描仪探活失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  router.delete('/api/scan/devices/:id', async (ctx, _req, res, params) => {
+    const devices = await ctx.scan.listDevices(ctx.vscan)
+    const target = devices.find((d) => d.id === params.id)
+    if (target && target.source !== 'manual') return sendError(res, 400, `仅手动添加的扫描设备可删除（${params.id} 来源为 ${target.source}）`)
+    const ok = await ctx.scan.removeDevice(params.id)
+    if (!ok) return sendError(res, 404, `扫描设备不存在：${params.id}`)
+    sendJson(res, 200, { ok: true })
+  })
+
+  router.post('/api/scan/jobs', async (ctx, _req, res, _params, _query, body) => {
+    const input = parseJsonBody<{ deviceId?: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }>(body)
+    if (!input?.deviceId) return sendError(res, 400, '请求体必须包含 deviceId 字段')
+    const devices = await ctx.scan.listDevices(ctx.vscan)
+    const device = devices.find((d) => d.id === input.deviceId)
+    if (!device) return sendError(res, 404, `扫描设备不存在：${input.deviceId}`)
+    const dpi = Number(input.dpi ?? 300) || 300
+    if (!Number.isFinite(dpi) || dpi < 75 || dpi > 1200) return sendError(res, 400, `dpi 必须在 75–1200 之间（实际 ${String(input.dpi ?? '未填')}）`)
+    const format = input.format === 'application/pdf' ? ('application/pdf' as const) : ('image/png' as const)
+    const colorMode = input.colorMode === 'Grayscale' ? ('Grayscale' as const) : ('RGB' as const)
+    const inputSource = input.inputSource === 'Feeder' ? ('Feeder' as const) : ('Platen' as const)
+    try {
+      const job = await ctx.scan.startScan(device, { format, dpi, colorMode, inputSource })
+      sendJson(res, 202, { job })
+    } catch (err) {
+      sendError(res, 400, `创建扫描任务失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  })
+
+  router.get('/api/scan/jobs', (ctx, _req, res) => {
+    sendJson(res, 200, { jobs: ctx.scan.listJobs() })
+  })
+
+  router.get('/api/scan/jobs/:id', (ctx, _req, res, params) => {
+    const job = ctx.scan.getJob(params.id)
+    if (!job) return sendError(res, 404, `扫描任务不存在：${params.id}`)
+    sendJson(res, 200, { job })
+  })
+
+  /** 取某页 PNG（二进制；参照 /api/jobs/:id/document 的直写模式） */
+  router.get('/api/scan/jobs/:id/image', async (ctx, _req, res, params, query) => {
+    const job = ctx.scan.getJob(params.id)
+    if (!job) return sendError(res, 404, `扫描任务不存在：${params.id}`)
+    const page = Math.max(1, Number(query.get('page') ?? 1) || 1)
+    const bytes = await ctx.scan.getJobImageBytes(job, page)
+    if (!bytes) return sendError(res, 404, `无图像：任务 ${params.id} 第 ${page} 页（已完成 ${job.pagesDone} 页）`)
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'content-disposition': `attachment; filename="${job.id}-page-${page}.png"`,
+      'cache-control': 'no-store',
+    })
+    res.end(bytes)
+  })
+
+  router.post('/api/scan/jobs/:id/cancel', async (ctx, _req, res, params) => {
+    try {
+      const job = await ctx.scan.cancelJob(params.id)
+      sendJson(res, 200, { job })
+    } catch (err) {
+      sendError(res, 404, err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  router.delete('/api/scan/jobs/:id', async (ctx, _req, res, params) => {
+    const ok = await ctx.scan.removeJob(params.id)
+    if (!ok) return sendError(res, 404, `扫描任务不存在：${params.id}`)
+    sendJson(res, 200, { ok: true })
+  })
+
   // ---------------------------------------------------------------- mDNS 发现（阶段 2）
 
   router.get('/api/discovery/mdns', (ctx, _req, res) => {

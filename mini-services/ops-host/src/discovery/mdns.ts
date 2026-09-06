@@ -4,6 +4,7 @@ import type { DiscoveredIpPrinter } from '../core/types'
 import type { EventBus } from '../core/eventbus'
 import type { EventLog } from '../core/eventlog'
 import type { VirtualIppServer } from '../vipp/server'
+import type { VirtualScanServer } from '../vscan/server'
 
 /**
  * mDNS 发现（纯 TypeScript UDP，RFC 6762/mDNS + DNS 压缩名解析）。
@@ -29,7 +30,8 @@ const TYPE_TXT = 16
 
 const IPP_SERVICE = '_ipp._tcp.local'
 const IPPS_SERVICE = '_ipps._tcp.local'
-const QUERIED_SERVICES = ['_ipp._tcp.local', '_ipps._tcp.local', '_universal._sub._ipp._tcp.local', '_pdl-datastream._tcp.local']
+const USCAN_SERVICE = '_uscan._tcp.local'
+const QUERIED_SERVICES = ['_ipp._tcp.local', '_ipps._tcp.local', '_universal._sub._ipp._tcp.local', '_pdl-datastream._tcp.local', '_uscan._tcp.local']
 
 // ---------------------------------------------------------------- DNS 编码
 
@@ -293,6 +295,8 @@ export interface MdnsServiceOptions {
   log: EventLog
   /** Virtual IPP Server（通告其打印机；null = 只浏览不通告） */
   vipp: VirtualIppServer | null
+  /** Virtual eSCL Scanner（以 _uscan._tcp 通告其扫描仪；null/缺省 = 不通告） */
+  vscan?: VirtualScanServer | null
   /** 通告的 TXT 扩展（默认含 note） */
   instanceNamePrefix?: string
 }
@@ -345,7 +349,7 @@ export class MdnsService {
         this.socket = socket
         console.log(`[mdns] 服务已启动（组播 ${MDNS_GROUP}:${MDNS_PORT}，主机名 ${this.hostname}）`)
         this.opts.log.record({ type: 'discovery', topic: 'mdns', message: `mDNS 服务已启动（${MDNS_GROUP}:${MDNS_PORT}）` })
-        if (this.opts.vipp) {
+        if (this.opts.vipp || this.opts.vscan) {
           this.announce()
           this.announceTimer = setInterval(() => this.announce(), ANNOUNCE_INTERVAL_MS)
         }
@@ -379,7 +383,7 @@ export class MdnsService {
     return { printers: this.lastScan, at: this.lastScanAt, note: this.lastScanNote }
   }
 
-  /** 扫描（2s 窗口收集；返回聚合结果） */
+  /** 扫描（2s 窗口收集；返回聚合结果 —— 仅打印机类服务，扫描仪由 scanUscan 返回） */
   async scan(windowMs = SCAN_WINDOW_MS): Promise<DiscoveredIpPrinter[]> {
     if (!this.isAvailable() || !this.socket) {
       this.lastScan = []
@@ -387,7 +391,7 @@ export class MdnsService {
       return []
     }
     this.collectBuffer = []
-    // 发送 PTR 查询（含已知服务子类型）
+    // 发送 PTR 查询（含已知服务子类型 + _uscan 扫描仪；聚合时打印列表会过滤掉扫描仪）
     const questions = QUERIED_SERVICES.map((name) => ({ name, type: TYPE_PTR }))
     const query = encodeQuery(questions)
     try {
@@ -400,7 +404,7 @@ export class MdnsService {
     await new Promise((resolve) => setTimeout(resolve, windowMs))
     const packets = this.collectBuffer ?? []
     this.collectBuffer = null
-    const printers = aggregate(packets)
+    const printers = aggregate(packets, 'printers')
     this.lastScan = printers
     this.lastScanAt = new Date().toISOString()
     this.lastScanNote = printers.length > 0 ? `发现 ${printers.length} 台 IPP 打印机（含本机 Virtual IPP 通告）` : '窗口期内未收到 mDNS 响应（可能是组播被环境禁用，或网段内无 IPP 设备）'
@@ -409,36 +413,87 @@ export class MdnsService {
     return printers
   }
 
+  /**
+   * 扫描 _uscan._tcp（eSCL/AirScan 扫描仪；P3）。
+   * 与 scan() 共用 collectBuffer（互斥：同时只允许一个在跑）；
+   * 独立聚合 —— 只保留 _uscan 实例，uri 填 http://{ip}:{port}，txt.service='_uscan._tcp.local'。
+   */
+  async scanUscan(windowMs = SCAN_WINDOW_MS): Promise<DiscoveredIpPrinter[]> {
+    if (!this.isAvailable() || !this.socket) {
+      this.lastScanNote = this.lastScanNote || 'mDNS 不可用（socket 未绑定）'
+      return []
+    }
+    this.collectBuffer = []
+    const query = encodeQuery([{ name: USCAN_SERVICE, type: TYPE_PTR }])
+    try {
+      this.socket.send(query, MDNS_PORT, MDNS_GROUP)
+    } catch (err) {
+      this.lastScanNote = `mDNS _uscan 查询发送失败：${err instanceof Error ? err.message : String(err)}`
+      this.collectBuffer = null
+      return []
+    }
+    await new Promise((resolve) => setTimeout(resolve, windowMs))
+    const packets = this.collectBuffer ?? []
+    this.collectBuffer = null
+    const scanners = aggregate(packets, 'scanners')
+    this.opts.log.record({
+      type: 'discovery',
+      topic: 'mdns',
+      message: `mDNS _uscan 扫描完成：${scanners.length} 台扫描仪（${scanners.map((p) => p.name).join('、') || '无'}）`,
+    })
+    return scanners
+  }
+
   // ---------------------------------------------------------------- 通告（advertiser）
 
   private serviceInstances(): ServiceInstance[] {
-    const vipp = this.opts.vipp
-    if (!vipp) return []
-    const tlsPort = vipp.tlsActivePort
     const out: ServiceInstance[] = []
-    for (const snapshot of vipp.list()) {
-      const label = snapshot.profile
-      const baseTxt = {
-        txtvers: '1',
-        rp: `printers/${snapshot.id}`,
-        ty: 'OpenPrintShare Virtual IPP',
-        pdl: 'application/pdf',
-        qtotal: '1',
-      }
-      out.push({
-        instanceName: `OPS Virtual IPP ${label}._ipp._tcp.local`,
-        ptrName: IPP_SERVICE,
-        host: this.hostname,
-        port: vipp.port,
-        txt: { ...baseTxt, note: 'OPS Virtual IPP Server' },
-      })
-      if (tlsPort !== null) {
+    const vipp = this.opts.vipp
+    if (vipp) {
+      const tlsPort = vipp.tlsActivePort
+      for (const snapshot of vipp.list()) {
+        const label = snapshot.profile
+        const baseTxt = {
+          txtvers: '1',
+          rp: `printers/${snapshot.id}`,
+          ty: 'OpenPrintShare Virtual IPP',
+          pdl: 'application/pdf',
+          qtotal: '1',
+        }
         out.push({
-          instanceName: `OPS Virtual IPP ${label}._ipps._tcp.local`,
-          ptrName: IPPS_SERVICE,
+          instanceName: `OPS Virtual IPP ${label}._ipp._tcp.local`,
+          ptrName: IPP_SERVICE,
           host: this.hostname,
-          port: tlsPort,
-          txt: { ...baseTxt, note: 'OPS Virtual IPP Server (ipps/TLS)' },
+          port: vipp.port,
+          txt: { ...baseTxt, note: 'OPS Virtual IPP Server' },
+        })
+        if (tlsPort !== null) {
+          out.push({
+            instanceName: `OPS Virtual IPP ${label}._ipps._tcp.local`,
+            ptrName: IPPS_SERVICE,
+            host: this.hostname,
+            port: tlsPort,
+            txt: { ...baseTxt, note: 'OPS Virtual IPP Server (ipps/TLS)' },
+          })
+        }
+      }
+    }
+    // Virtual eSCL Scanner（P3）：每台档案一个 _uscan._tcp 实例（rp 指向 eSCL 任务端点）
+    const vscan = this.opts.vscan
+    if (vscan) {
+      for (const scanner of vscan.list()) {
+        out.push({
+          instanceName: `OPS Virtual Scanner ${scanner.label}._uscan._tcp.local`,
+          ptrName: USCAN_SERVICE,
+          host: this.hostname,
+          port: vscan.port,
+          txt: {
+            txtvers: '1',
+            rp: 'eSCL/ScanJobs',
+            ty: 'OpenPrintShare Virtual Scanner',
+            pdl: 'image/png',
+            note: 'OPS Virtual eSCL Scanner',
+          },
         })
       }
     }
@@ -503,17 +558,20 @@ export class MdnsService {
     for (const q of query.questions) {
       const lower = q.name.toLowerCase()
       if (q.type === TYPE_PTR || q.type === 255) {
-        // PTR 查询：_ipp._tcp.local / _universal._sub._ipp._tcp.local / _pdl-datastream._tcp.local
-        if (lower.endsWith('_ipp._tcp.local') || lower.endsWith('_ipps._tcp.local') || lower.endsWith('_pdl-datastream._tcp.local')) {
+        // PTR 查询：_ipp/_ipps/_universal(_sub._ipp)/_pdl-datastream/_uscan
+        // 只应答与查询服务类型匹配的实例（_pdl 查询不返回 _ipp/_ipps 实例 —— 否则聚合端 service 标签会被覆盖污染）
+        if (
+          lower.endsWith('_ipp._tcp.local') ||
+          lower.endsWith('_ipps._tcp.local') ||
+          lower.endsWith('_pdl-datastream._tcp.local') ||
+          lower.endsWith('_uscan._tcp.local')
+        ) {
           for (const inst of instances) {
-            if (
-              lower.startsWith('_universal._sub._ipp') ||
-              lower === IPP_SERVICE ||
-              lower === IPPS_SERVICE ||
-              lower.endsWith('_ipp._tcp.local') ||
-              lower.endsWith('_ipps._tcp.local') ||
-              lower.endsWith('_pdl-datastream._tcp.local')
-            ) {
+            const instService = inst.ptrName.toLowerCase()
+            const matches =
+              (lower === instService) || // 同服务（_ipp → _ipp 实例，_ipps → _ipps 实例，_uscan → _uscan 实例）
+              (lower.startsWith('_universal._sub._ipp') && instService === IPP_SERVICE) // Universal 子类型 → _ipp 实例
+            if (matches) {
               records.push({ name: q.name, type: TYPE_PTR, class: 0x8001, ttl: 4500, rdata: encodeName(inst.instanceName) })
               records.push({ name: inst.instanceName, type: TYPE_SRV, class: 0x8001, ttl: 120, rdata: srvRdata(inst.port, inst.host) })
               records.push({ name: inst.instanceName, type: TYPE_TXT, class: 0x8001, ttl: 120, rdata: txtRdata(inst.txt) })
@@ -536,6 +594,11 @@ export class MdnsService {
       }
     }
     if (records.length === 0) return
+    // 附带本机 hostname 的 A 记录（additional section）：客户端聚合时才能解析 SRV target → IP，
+    // 否则扫描仪 uri 会回退 127.0.0.1（与本机 vscan baseUrl 撞车被去重过滤）
+    for (const ip of localIps) {
+      records.push({ name: this.hostname, type: TYPE_A, class: 0x8001, ttl: 120, rdata: Buffer.from(ip.split('.').map(Number)) })
+    }
     const packet = encodeResponse(records)
     try {
       this.socket.send(packet, MDNS_PORT, MDNS_GROUP)
@@ -545,8 +608,12 @@ export class MdnsService {
   }
 }
 
-/** 响应包聚合：PTR→SRV→TXT→A → DiscoveredIpPrinter[] */
-function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
+/**
+ * 响应包聚合：PTR→SRV→TXT→A → DiscoveredIpPrinter[]。
+ * mode='printers'：仅打印机类服务（_uscan 扫描仪实例不进打印列表）；
+ * mode='scanners'：仅 _uscan 扫描仪实例（uri=http://{ip}:{port}，txt.service='_uscan._tcp.local'）。
+ */
+function aggregate(packets: DnsPacket[], mode: 'printers' | 'scanners' = 'printers'): DiscoveredIpPrinter[] {
   const ptrs = new Map<string, string>() // instanceName → serviceType（PTR 目标）
   const srvs = new Map<string, { port: number; target: string }>()
   const txts = new Map<string, Record<string, string>>()
@@ -557,7 +624,13 @@ function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
       try {
         if (record.type === TYPE_PTR) {
           const target = parsePtr(record.rdata)
-          if (target.endsWith('_ipp._tcp.local') || target.endsWith('_ipps._tcp.local') || target.endsWith('_pdl-datastream._tcp.local') || target.includes('._sub._ipp._tcp.local')) {
+          if (
+            target.endsWith('_ipp._tcp.local') ||
+            target.endsWith('_ipps._tcp.local') ||
+            target.endsWith('_pdl-datastream._tcp.local') ||
+            target.endsWith('_uscan._tcp.local') ||
+            target.includes('._sub._ipp._tcp.local')
+          ) {
             ptrs.set(target, record.name)
           }
         } else if (record.type === TYPE_SRV) {
@@ -578,7 +651,12 @@ function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
 
   const out: DiscoveredIpPrinter[] = []
   const seen = new Set<string>()
-  for (const [instanceName, serviceType] of ptrs) {
+  for (const [instanceName, ptrRecordName] of ptrs) {
+    const lowerInstance = instanceName.toLowerCase()
+    const isUscan = lowerInstance.endsWith(USCAN_SERVICE)
+    // 扫描仪不属于打印列表：printers 模式跳过 _uscan；scanners 模式只保留 _uscan
+    if (mode === 'printers' && isUscan) continue
+    if (mode === 'scanners' && !isUscan) continue
     const srv = srvs.get(instanceName)
     if (!srv) continue
     const txt = txts.get(instanceName) ?? {}
@@ -586,18 +664,31 @@ function aggregate(packets: DnsPacket[]): DiscoveredIpPrinter[] {
     // 实例名首标签 = 展示名
     const display = instanceName.split('.')[0] ?? instanceName
     const rp = txt['rp'] && txt['rp'] !== '' ? txt['rp'].replace(/^\/+/, '') : 'ipp/print'
-    // _ipps._tcp 服务 → ipps:// URI（TLS 端点）
-    const scheme = serviceType.endsWith('_ipps._tcp.local') ? 'ipps' : 'ipp'
-    const uri = `${scheme}://${ip}:${srv.port}/${rp}`
-    if (seen.has(uri)) continue
-    seen.add(uri)
+    // 服务类型按实例名确定性推导（PTR record.name 会因多服务查询响应被覆盖，不能作为判定依据）
+    const derivedService = isUscan
+      ? USCAN_SERVICE
+      : lowerInstance.endsWith('_ipps._tcp.local')
+        ? '_ipps._tcp.local'
+        : lowerInstance.endsWith('_pdl-datastream._tcp.local')
+          ? '_pdl-datastream._tcp.local'
+          : lowerInstance.includes('._sub._ipp._tcp.local')
+            ? '_universal._sub._ipp._tcp.local'
+            : lowerInstance.endsWith('_ipp._tcp.local')
+              ? '_ipp._tcp.local'
+              : ptrRecordName
+    // 扫描仪 uri 只到 origin（eSCL 端点由 rp=eSCL/ScanJobs 推导）；打印机按 scheme 拼 rp
+    const uri = isUscan ? `http://${ip}:${srv.port}` : `${lowerInstance.endsWith('_ipps._tcp.local') ? 'ipps' : 'ipp'}://${ip}:${srv.port}/${rp}`
+    // 去重键：扫描仪同 IP 同端口承载多个档案（uri 相同），须按实例名去重；打印机按 URI
+    const seenKey = isUscan ? instanceName : uri
+    if (seen.has(seenKey)) continue
+    seen.add(seenKey)
     out.push({
       name: display,
       host: srv.target,
       ip,
       port: srv.port,
       uri,
-      txt: { ...txt, service: serviceType },
+      txt: { ...txt, service: derivedService },
       source: 'mdns',
     })
   }

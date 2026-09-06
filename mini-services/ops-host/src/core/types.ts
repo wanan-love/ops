@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.3.1'
+export const OPS_VERSION = '0.3.2'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -339,4 +339,41 @@ export interface HostInfo {
   dataDir: string
   /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
   vippTlsPort?: number | null
+  /** Virtual eSCL Scanner 端口（null = 未启用；开发/测试用） */
+  vscanPort?: number | null
+}
+
+// ---------------------------------------------------------------- 扫描（P3 · eSCL）
+
+/** 扫描设备 */
+export interface ScanDevice {
+  id: string
+  name: string
+  host: string
+  port: number
+  baseUrl: string
+  source: 'vscan' | 'mdns' | 'manual'
+  txt?: Record<string, string>
+  lastSeenAt: string
+}
+
+export type ScanJobState = 'pending' | 'scanning' | 'completed' | 'failed' | 'cancelled'
+
+/** 扫描任务 */
+export interface ScanJob {
+  id: string
+  deviceId: string
+  deviceName: string
+  state: ScanJobState
+  format: 'image/png' | 'application/pdf'
+  dpi: number
+  colorMode: 'RGB' | 'Grayscale'
+  inputSource: 'Platen' | 'Feeder'
+  pagesDone: number
+  pagesTotal: number
+  images: string[]
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+  durationMs: number | null
 }

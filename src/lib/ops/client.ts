@@ -13,6 +13,8 @@ import type {
   PrintOptions,
   PrintResult,
   ScenarioResult,
+  ScanDevice,
+  ScanJob,
   SystemStats,
   TestRun,
 } from './types'
@@ -35,6 +37,19 @@ export function wsUrl(rtPort: number): string {
     return `${proto}://${window.location.hostname}:${rtPort}`
   }
   return `/?XTransformPort=${rtPort}`
+}
+
+/** 扫描结果图像 URL（PNG 页）
+ *  - 网关模式：相对 /api + XTransformPort（与 restUrl 一致）
+ *  - 直连模式：REST 独立端口绝对地址
+ */
+export function scanImageUrl(port: number, jobId: string, page: number): string {
+  const path = `/scan/jobs/${encodeURIComponent(jobId)}/image?page=${page}`
+  if (OPS_DIRECT_MODE && typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http'
+    return `${proto}://${window.location.hostname}:${port}/api${path}`
+  }
+  return restUrl(port, path)
 }
 
 export class ApiError extends Error {
@@ -188,6 +203,19 @@ export function createOpsClient(port: number) {
 
     // mDNS 网络打印机发现
     mdnsScan: () => request<{ printers: DiscoveredIpPrinter[] }>(port, 'POST', '/discovery/mdns/scan'),
+
+    // scan（P3 · eSCL）
+    scanDevices: () => request<{ devices: ScanDevice[] }>(port, 'GET', '/scan/devices'),
+    scanMdns: () => request<{ devices: ScanDevice[] }>(port, 'POST', '/scan/devices/scan-mdns'),
+    addScanDevice: (input: { baseUrl: string; name?: string }) =>
+      request<{ device: ScanDevice }>(port, 'POST', '/scan/devices', { json: input }),
+    removeScanDevice: (id: string) => request<{ ok: boolean }>(port, 'DELETE', `/scan/devices/${encodeURIComponent(id)}`),
+    startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }) =>
+      request<{ job: ScanJob }>(port, 'POST', '/scan/jobs', { json: input }),
+    scanJobs: () => request<{ jobs: ScanJob[] }>(port, 'GET', '/scan/jobs'),
+    cancelScanJob: (id: string) => request<{ job: ScanJob }>(port, 'POST', `/scan/jobs/${encodeURIComponent(id)}/cancel`),
+    deleteScanJob: (id: string) => request<{ ok: boolean }>(port, 'DELETE', `/scan/jobs/${encodeURIComponent(id)}`),
+    scanImageUrl: (jobId: string, page: number) => scanImageUrl(port, jobId, page),
   }
 }
 

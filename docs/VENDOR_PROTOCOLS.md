@@ -58,7 +58,7 @@
 
 | # | 能力 | 标准协议现状 | 是否必须厂商专用 |
 |---|---|---|---|
-| 1 | **扫描**（MFP） | IPP-Scan（PWG 规范）存在但部署罕见；**eSCL（Apple AirScan，HTTP REST）已是事实标准**，sane-airscan 开源实现同时覆盖 eSCL + WSD-Scan；`_uscan._tcp`/`_scanner._tcp` 可发现 | **半标准**：走 eSCL 即可覆盖 AirPrint 认证的 MFP；非 AirPrint 老机型需厂商私有（TWAIN over 网络/各私有协议） |
+| 1 | **扫描**（MFP） | IPP-Scan（PWG 规范）存在但部署罕见；**eSCL（Apple AirScan，HTTP REST）已是事实标准**，sane-airscan 开源实现同时覆盖 eSCL + WSD-Scan；`_uscan._tcp`/`_scanner._tcp` 可发现 | **半标准**：走 eSCL 即可覆盖 AirPrint 认证的 MFP；非 AirPrint 老机型需厂商私有（TWAIN over 网络/各私有协议）。标准协议，**OPS 已实现 ✅（v0.3.2：eSCL 客户端 + _uscan 发现，PNG 多页）** |
 | 2 | **固件版本/序列号细节** | IPP 无强制属性（部分机型回 `printer-uuid`/`printer-firmware-string` 非标准）；SNMP `prtGeneralSerialNumber`（43.5.1.1.1 一带）可选实现 | 混合：SNMP 常可得，属「尽力而为」 |
 | 3 | **墨盒芯片原始计数**（已打印页数/剩余页数/区域码/芯片认证状态） | 无任何标准承载；厂商云与私有通道才有 | **必须 Vendor Adapter / 不可达**（多数只在机身 UI 与厂商云可见） |
 | 4 | **耗材精确克重/剩余寿命（非百分比）** | IPP/SNMP 均只有百分比或 −2 粗档；维护件（fuser/OPC/waste toner）在 Printer-MIB 中可表达但厂商选择性暴露 | 混合：SNMP 拿得到就标准，拿不到只能私有 |
@@ -97,7 +97,7 @@
 | 能力协商（color/duplex/media/copies/dpi/ppm） | **标准可获取**（IPP Get-Printer-Attributes；Windows DEVMODE 兜底 legacy） | OPS `reportFromPrinterAttributes` 已覆盖全部七项 |
 | **墨量/耗材百分比** | **混合**：IPP `marker-*`（新机）+ SNMP `prtMarkerSuppliesLevel`（企业/兄弟等）覆盖大多数；剩余长尾（消费喷墨禁 SNMP 且 IPP 不回 marker）→ **必须 Vendor Adapter 或 UI 隐藏** | 厂商对比表第 5 列 |
 | 耗材低量告警 | **标准可获取**（IPP `printer-state-reasons` 的 `toner-low`/`ink-low` 等 keyword——很多机型即使不给 level 也会给 keyword） | 建议 OPS 补充解析该 keyword 作为耗材降级信号 |
-| 扫描 | **半标准**（eSCL 覆盖 AirPrint MFP；老机必须厂商私有） | sane-airscan 生态成熟 |
+| 扫描 | **半标准**（eSCL 覆盖 AirPrint MFP；老机必须厂商私有）。**OPS 已实现基础扫描 ✅（v0.3.2：eSCL HTTP+XML 客户端 + _uscan._tcp mDNS 发现 + PNG 多页 + 取销）**；PDF 合成/双面/DFE 留后续 | sane-airscan 生态成熟；真实扫描仪待硬件验证 |
 | 固件/序列号 | **混合**（SNMP 尽力而为） | prtGeneral 表可选实现 |
 | 墨盒芯片精确计数 | **必须 Vendor Adapter**（且多数无网络暴露面） | 无标准承载 |
 | 厂商云能力（Epson Connect/HP Smart） | **不可达/不做** | 公开 API 均纯云端，与 LAN 架构正交 |
@@ -130,7 +130,7 @@ interface VendorAdapter {
 |---|---|---|---|
 | **P1（标准二级来源，零厂商知识）** | ✅ 已完成（v0.3.1）：① SNMP HOST-RESOURCES `hrPrinterDetectedErrorState`/`hrPrinterStatus`（walk hrDeviceType 定位 printer 设备 + 位掩码解析 → 缺纸/卡纸/门开/耗材告警，作为状态二级来源融合）② community 可配置（settings.snmpCommunity + PATCH /api/settings + 配对页 UI）③ IPP `toner-low/ink-low` 告警附加 ④ driverless 判定含 `image/urf`/`application/pdf` | 纯标准 | 耗材/状态覆盖显著提升，无维护负担 |
 | **P2** | ✅ 已完成（v0.3.1）：ipps:// TLS——client 侧 node:https + rejectUnauthorized:false（TOFU 自签容忍，与 CUPS driverless 一致）；VIPP 提供 :3063 TLS 测试端点；自测场景 15 ipps-full-flow 验证全链路 | 纯标准 | 企业机与新款家用机安全合规 |
-| **P3** | eSCL 扫描后端（`_uscan._tcp`/`_scanner._tcp` 发现 + HTTP REST） | 事实标准 | AirPrint MFP 的扫描能力，对齐 sane-airscan 生态 |
+| **P3** | ✅ 已完成（v0.3.2）：eSCL 扫描——自研 eSCL 客户端（HTTP + XML，对齐 sane-airscan 生态：ScannerStatus / ScanJobs 创建 / NextDocument 逐页取图 / Delete 取销，https TOFU）+ mDNS `_uscan._tcp` 发现；Virtual eSCL Scanner 测试端点 **:3065**（vscan-flatbed / vscan-adf 两档案）；自测场景 16 escl-full-flow（Platen 单页 + Feeder 多页 + PNG 魔数/IHDR 断言 + 取销容错） | 事实标准 | AirPrint MFP 的扫描能力落地（PNG 多页输出；PDF 合成、双面扫描留后续） |
 | **P4（首个真 Vendor Adapter）** | Brother PJL over 9100 双向状态（试点：SNMP 失败时才启用）+ 通用 PJL `@PJL INFO` 探测 | 厂商专用 | 消费级墨量长尾；验证适配层模式 |
 | **P5（可选）** | 厂商 MIB 解析包（HP/Lexmark/Kyocera 公开 MIB 文件加载私有 OID 映射）；EWS 抓取明确列为**反模式不建议** | 厂商专用 | 维修件计数等增强信息 |
 

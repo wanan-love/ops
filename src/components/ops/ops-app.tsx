@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { io, type Socket } from 'socket.io-client'
+import { FileUp, FlaskConical, History, KeyRound, LayoutDashboard, Printer, Radar, ScanLine, ScrollText, ServerCog } from 'lucide-react'
 import { wsUrl } from '@/lib/ops/client'
 import { useOpsStore } from './store'
-import type { HostInfo, OpsEvent, PairingRequest, PairedDevice, Printer, PrintJob, TestRun, DiscoveredHost } from '@/lib/ops/types'
+import type { HostInfo, OpsEvent, PairingRequest, PairedDevice, Printer as PrinterRef, PrintJob, ScanJob, TestRun, DiscoveredHost } from '@/lib/ops/types'
 import { OverviewView } from './overview-view'
 import { DiscoveryView } from './discovery-view'
 import { PrintersView } from './printers-view'
 import { PrintView } from './print-view'
 import { QueueView } from './queue-view'
+import { ScanView } from './scan-view'
 import { PairingView } from './pairing-view'
 import { DebugView } from './debug-view'
 import { EventsView } from './events-view'
@@ -19,15 +21,16 @@ import { Header } from './header'
 import { Footer } from './footer'
 
 const TAB_ITEMS = [
-  { value: 'overview', label: '概览' },
-  { value: 'discovery', label: '发现主机' },
-  { value: 'printers', label: '打印机' },
-  { value: 'print', label: '打印' },
-  { value: 'queue', label: '打印队列' },
-  { value: 'pairing', label: '设备配对' },
-  { value: 'backends', label: '打印后端' },
-  { value: 'events', label: '事件日志' },
-  { value: 'debug', label: '调试 · 开发测试' },
+  { value: 'overview', label: '概览', icon: LayoutDashboard },
+  { value: 'discovery', label: '发现主机', icon: Radar },
+  { value: 'printers', label: '打印机', icon: Printer },
+  { value: 'print', label: '打印', icon: FileUp },
+  { value: 'queue', label: '打印队列', icon: History },
+  { value: 'scan', label: '扫描', icon: ScanLine },
+  { value: 'pairing', label: '设备配对', icon: KeyRound },
+  { value: 'backends', label: '打印后端', icon: ServerCog },
+  { value: 'events', label: '事件日志', icon: ScrollText },
+  { value: 'debug', label: '调试 · 开发测试', icon: FlaskConical },
 ] as const
 
 export type TabValue = (typeof TAB_ITEMS)[number]['value']
@@ -62,12 +65,13 @@ export default function OpsApp() {
       useOpsStore.getState().setSocketConnected(false)
     })
     socket.on('job:update', (job: PrintJob) => store.applyJob(job))
-    socket.on('printer:update', (printer: Printer) => store.applyPrinter(printer))
+    socket.on('printer:update', (printer: PrinterRef) => store.applyPrinter(printer))
     socket.on('event', (event: OpsEvent) => useOpsStore.getState().applyEvent(event))
     socket.on('host:update', (info: HostInfo) => useOpsStore.getState().applyHostInfo(info))
     socket.on('pairing:update', (payload: { requests: PairingRequest[]; devices: PairedDevice[] }) => useOpsStore.getState().applyPairing(payload))
     socket.on('test:progress', (run: TestRun) => useOpsStore.getState().applyTestRun(run))
     socket.on('discovery:update', (payload: { hosts: DiscoveredHost[] }) => useOpsStore.getState().applyHosts(payload.hosts))
+    socket.on('scan:update', (job: ScanJob) => useOpsStore.getState().applyScanJob(job))
     socket.on('snapshot', () => {
       void useOpsStore.getState().refresh()
     })
@@ -136,10 +140,11 @@ export default function OpsApp() {
                   aria-selected={active}
                   onClick={() => setTab(item.value)}
                   className={
-                    'relative flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 ' +
+                    'relative flex min-h-11 shrink-0 items-center whitespace-nowrap gap-1.5 rounded-md px-3 text-sm font-medium transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9 ' +
                     (active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground')
                   }
                 >
+                  <item.icon className="size-3.5 shrink-0" aria-hidden />
                   {item.label}
                   <span
                     className={
@@ -175,6 +180,7 @@ export default function OpsApp() {
           {tab === 'printers' && <PrintersView />}
           {tab === 'print' && <PrintView goto={goto} />}
           {tab === 'queue' && <QueueView />}
+          {tab === 'scan' && <ScanView />}
           {tab === 'pairing' && <PairingView />}
           {tab === 'backends' && <BackendsView goto={goto} />}
           {tab === 'debug' && <DebugView goto={goto} />}

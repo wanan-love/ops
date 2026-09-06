@@ -2,6 +2,7 @@ import type { HostContext } from '../host'
 import type { PrintJob, ScenarioResult, TestStep } from '../core/types'
 import { makeApi, ScenarioFailure, ScenarioSkipped, type ScenarioApi } from './selftest'
 import { ippScenarios } from './scenarios-ipp'
+import { scanScenarios } from './scenarios-scan'
 
 /**
  * 10 个内置自动化场景（对应“Mock Printer 自动化测试”需求）：
@@ -18,6 +19,9 @@ import { ippScenarios } from './scenarios-ipp'
  *
  * 阶段 2 追加（scenarios-ipp.ts，虚拟打印机场景不改动）：
  * 11. ipp-full-flow / 12. ipp-capability-unknown / 13. ipp-cancel / 14. mdns-local-discovery / 15. ipps-full-flow
+ *
+ * P3 追加（scenarios-scan.ts）：
+ * 16. escl-full-flow —— eSCL 扫描全链路（vscan 虚拟扫描仪）
  */
 export type ScenarioId =
   | 'normal-print'
@@ -35,6 +39,7 @@ export type ScenarioId =
   | 'ipp-cancel'
   | 'mdns-local-discovery'
   | 'ipps-full-flow'
+  | 'escl-full-flow'
 
 interface Scenario {
   id: ScenarioId
@@ -250,7 +255,7 @@ function durationMs(job: PrintJob): number {
 }
 
 export function scenarioMeta(): Array<{ id: string; name: string; description: string }> {
-  return [...scenarios, ...ippScenarios].map(({ id, name, description }) => ({ id, name, description }))
+  return [...scenarios, ...ippScenarios, ...scanScenarios].map(({ id, name, description }) => ({ id, name, description }))
 }
 
 export async function runScenarios(
@@ -260,7 +265,11 @@ export async function runScenarios(
   manifest?: import('./selftest').RunManifest,
 ): Promise<ScenarioResult[]> {
   const results: ScenarioResult[] = []
-  const all: Scenario[] = [...scenarios, ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) }))]
+  const all: Scenario[] = [
+    ...scenarios,
+    ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
+    ...scanScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
+  ]
   for (const scenario of all) {
     if (!ids.includes(scenario.id)) continue
     const startedAt = Date.now()

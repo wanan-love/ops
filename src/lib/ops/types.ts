@@ -162,6 +162,8 @@ export interface HostInfo {
   restPort: number
   wsPort: number
   dataDir: string
+  /** 虚拟扫描服务（eSCL）端口（null = 未启用；开发/测试用） */
+  vscanPort?: number | null
   /** Virtual IPP TLS（ipps）端口（null = 未启用；开发/测试用） */
   vippTlsPort?: number | null
 }
@@ -290,7 +292,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.3.1'
+export const OPS_VERSION = '0.3.2'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',
@@ -313,4 +315,46 @@ export const CONSUMABLE_KIND_LABEL: Record<ConsumableInfo['kind'], string> = {
   drum: '鼓组件',
   'maintenance-kit': '维护组件',
   other: '其他',
+}
+
+// ---------------------------------------------------------------- 扫描（P3 · eSCL）
+export type ScanDeviceSource = 'vscan' | 'mdns' | 'manual'
+
+export interface ScanDevice {
+  id: string
+  name: string
+  host: string
+  port: number
+  baseUrl: string
+  source: ScanDeviceSource
+  txt?: Record<string, string>
+  lastSeenAt: string
+}
+
+export type ScanJobState = 'pending' | 'scanning' | 'completed' | 'failed' | 'cancelled'
+
+export interface ScanJob {
+  id: string
+  deviceId: string
+  deviceName: string
+  state: ScanJobState
+  format: 'image/png' | 'application/pdf'
+  dpi: number
+  colorMode: 'RGB' | 'Grayscale'
+  inputSource: 'Platen' | 'Feeder'
+  pagesDone: number
+  pagesTotal: number
+  images: string[]
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+  durationMs: number | null
+}
+
+export const SCAN_JOB_STATE_LABEL: Record<ScanJobState, string> = {
+  pending: '排队中',
+  scanning: '扫描中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
 }

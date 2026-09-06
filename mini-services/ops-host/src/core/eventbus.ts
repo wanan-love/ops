@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { BackendKind, DiscoveredHost, HostInfo, OpsEvent, PairedDevice, PairingRequest, Printer, PrintJob, TestRun, VippPrinterSnapshot } from './types'
+import type { BackendKind, DiscoveredHost, HostInfo, OpsEvent, PairedDevice, PairingRequest, Printer, PrintJob, ScanJob, TestRun, VippPrinterSnapshot } from './types'
 
 /** 领域事件总线：Core 内部解耦 + WS 实时层广播的数据源 */
 export interface BusEvents {
@@ -14,6 +14,8 @@ export interface BusEvents {
   'backend:update': { backends: Array<{ kind: BackendKind; available: boolean; note: string }> }
   /** Virtual IPP Server 打印机快照变化（阶段 2） */
   'vipp:update': { printer: VippPrinterSnapshot }
+  /** 扫描任务状态变化（P3 · eSCL） */
+  'scan:update': { job: ScanJob }
   /** 请求客户端重新拉取快照（Host 重启等） */
   'snapshot': Record<string, never>
 }

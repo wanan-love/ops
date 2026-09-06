@@ -1,5 +1,5 @@
 import type { HostContext } from '../host'
-import type { DiscoveredIpPrinter, PrintJob, Printer, ScenarioResult, TestRun, TestStep } from '../core/types'
+import type { DiscoveredIpPrinter, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
 import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
 
@@ -8,16 +8,18 @@ import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
  *  - createdPrinterIds：本运行新建的虚拟/导入打印机（成功后删除）
  *  - importedRestores：复用的既有导入条目（成功后恢复导入前的 test/shared 状态，避免把种子打印机永久标记为测试数据）
  *  - jobIds：本运行提交的任务（成功后删除）
+ *  - scanJobIds：本运行提交的扫描任务（成功后删除 scan-jobs/{id} 目录，P3）
  * 失败时全部保留供排查，可用调试页「清理测试数据」一键移除。
  */
 export interface RunManifest {
   createdPrinterIds: Set<string>
   importedRestores: Map<string, { test: boolean; shared: boolean }>
   jobIds: Set<string>
+  scanJobIds: Set<string>
 }
 
 export function newRunManifest(): RunManifest {
-  return { createdPrinterIds: new Set(), importedRestores: new Map(), jobIds: new Set() }
+  return { createdPrinterIds: new Set(), importedRestores: new Map(), jobIds: new Set(), scanJobIds: new Set() }
 }
 
 /**
@@ -123,12 +125,21 @@ export class SelfTestRunner {
     }
     const jobIds = manifest.jobIds
     const removedJobs = await ctx.jobs.removeJobsWhere((j) => jobIds.has(j.id))
+    // 扫描任务（P3）：走 ScanManager.removeJob（同步内存 Map + 删除 scan-jobs/{id} 目录，内部 fs.rm recursive force；失败忽略）
+    let removedScanJobs = 0
+    for (const id of manifest.scanJobIds) {
+      try {
+        if (await ctx.scan.removeJob(id)) removedScanJobs++
+      } catch {
+        /* 目录不存在 / 已被删除 —— 忽略 */
+      }
+    }
     if (touched || removedPrinters > 0) await ctx.printers.persistNow()
-    if (removedPrinters > 0 || restored > 0 || removedJobs > 0) {
+    if (removedPrinters > 0 || restored > 0 || removedJobs > 0 || removedScanJobs > 0) {
       ctx.bus.emit('snapshot', {})
       ctx.log.test(
         run,
-        `全部通过，已自动清理本次运行的测试数据：删除 ${removedPrinters} 台临时打印机 / ${removedJobs} 个任务 / 恢复 ${restored} 台导入打印机原状态（测试运行历史保留）`,
+        `全部通过，已自动清理本次运行的测试数据：删除 ${removedPrinters} 台临时打印机 / ${removedJobs} 个任务 / ${removedScanJobs} 个扫描任务 / 恢复 ${restored} 台导入打印机原状态（测试运行历史保留）`,
       )
     }
   }
@@ -167,6 +178,24 @@ export interface ScenarioApi {
   importFromUri(backend: 'ipp', uri: string, opts?: { displayName?: string }): Promise<Printer>
   /** 读取 vipp 打印机内部任务状态（验证 IPP Cancel-Job 等服务端效果） */
   vippJobState(printerId: string, backendJobId: string): string | null
+  // ---- 扫描（P3 · eSCL）----
+  /** Virtual eSCL Scanner 是否启用（OPS_VSCAN_ENABLED=0 时 false → 场景 skipped） */
+  vscanAvailable(): boolean
+  /** 扫描设备列表（vscan 静态档案 + 手动添加 manual） */
+  scanDevices(): Promise<ScanDevice[]>
+  /** 提交扫描任务（记录到 manifest.scanJobIds，全部通过后自动清理） */
+  startScan(
+    deviceId: string,
+    opts: { format: 'image/png' | 'application/pdf'; dpi: number; colorMode: 'RGB' | 'Grayscale'; inputSource: 'Platen' | 'Feeder' },
+  ): Promise<ScanJob>
+  /** 读取扫描任务（null = 不存在） */
+  scanJob(jobId: string): ScanJob | null
+  /** 轮询等待扫描任务满足条件（超时抛 ScenarioFailure） */
+  waitForScan(jobId: string, predicate: (job: ScanJob) => boolean, timeoutMs?: number): Promise<ScanJob>
+  /** 取消扫描任务（已终态幂等返回） */
+  cancelScan(jobId: string): Promise<ScanJob>
+  /** 读取某页 PNG 字节（1-based；null = 无图像） */
+  scanArtifactBytes(job: ScanJob, page: number): Promise<Uint8Array | null>
 }
 
 export class ScenarioFailure extends Error {
@@ -321,6 +350,47 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
       const numeric = Number(backendJobId)
       if (!Number.isInteger(numeric)) return null
       return ctx.vipp.jobState(printerId, numeric)
+    },
+    // ---- 扫描（P3 · eSCL）----
+    vscanAvailable() {
+      return ctx.vscan !== null
+    },
+    async scanDevices() {
+      return ctx.scan.listDevices(ctx.vscan)
+    },
+    async startScan(deviceId, opts) {
+      const devices = await ctx.scan.listDevices(ctx.vscan)
+      const device = devices.find((d) => d.id === deviceId)
+      if (!device) throw new ScenarioFailure(`扫描设备不存在：${deviceId}（可用：${devices.map((d) => d.id).join('、')}）`)
+      const job = await ctx.scan.startScan(device, opts)
+      manifest?.scanJobIds.add(job.id)
+      return job
+    },
+    scanJob(jobId) {
+      return ctx.scan.getJob(jobId)
+    },
+    async waitForScan(jobId, predicate, timeoutMs = 30000) {
+      const start = Date.now()
+      for (;;) {
+        const job = ctx.scan.getJob(jobId)
+        if (!job) throw new ScenarioFailure(`扫描任务不存在：${jobId}`)
+        if (predicate(job)) return job
+        if (Date.now() - start > timeoutMs) {
+          throw new ScenarioFailure(`等待超时（${timeoutMs}ms）：扫描任务 ${jobId} 当前 state=${job.state} pagesDone=${job.pagesDone}/${job.pagesTotal}${job.error ? ` error=${job.error}` : ''}`)
+        }
+        await this.sleep(50)
+      }
+    },
+    async cancelScan(jobId) {
+      try {
+        return await ctx.scan.cancelJob(jobId)
+      } catch (err) {
+        throw new ScenarioFailure(err instanceof Error ? err.message : String(err))
+      }
+    },
+    async scanArtifactBytes(job, page) {
+      const bytes = await ctx.scan.getJobImageBytes(job, page)
+      return bytes ? new Uint8Array(bytes) : null
     },
   }
 }

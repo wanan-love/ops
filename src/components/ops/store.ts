@@ -2,7 +2,19 @@
 
 import { create } from 'zustand'
 import { createOpsClient } from '@/lib/ops/client'
-import type { DiscoveredHost, HostInfo, HostSettings, OpsEvent, PairingRequest, PairedDevice, Printer, PrintJob, TestRun } from '@/lib/ops/types'
+import type {
+  DiscoveredHost,
+  HostInfo,
+  HostSettings,
+  OpsEvent,
+  PairingRequest,
+  PairedDevice,
+  Printer,
+  PrintJob,
+  ScanDevice,
+  ScanJob,
+  TestRun,
+} from '@/lib/ops/types'
 
 export const DEFAULT_REST_PORT = 3001
 
@@ -20,6 +32,8 @@ interface OpsState {
   devices: PairedDevice[]
   hosts: DiscoveredHost[]
   testRun: TestRun | null
+  scanDevices: ScanDevice[]
+  scanJobs: ScanJob[]
   lastRefreshAt: number
   busy: string | null
 
@@ -33,7 +47,15 @@ interface OpsState {
   applyPairing: (payload: { requests: PairingRequest[]; devices: PairedDevice[] }) => void
   applyTestRun: (run: TestRun) => void
   applyHosts: (hosts: DiscoveredHost[]) => void
+  applyScanJob: (job: ScanJob) => void
   refresh: () => Promise<void>
+  refreshScan: () => Promise<void>
+  scanMdns: () => Promise<ScanDevice[]>
+  startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }) => Promise<ScanJob>
+  cancelScanJob: (id: string) => Promise<ScanJob>
+  deleteScanJob: (id: string) => Promise<void>
+  addScanDevice: (input: { baseUrl: string; name?: string }) => Promise<ScanDevice>
+  removeScanDevice: (id: string) => Promise<void>
 }
 
 export function useOpsClient() {
@@ -54,10 +76,12 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   devices: [],
   hosts: [],
   testRun: null,
+  scanDevices: [],
+  scanJobs: [],
   lastRefreshAt: 0,
   busy: null,
 
-  setRestPort: (port) => set({ restPort: port, hostInfo: null, printers: [], jobs: [], events: [], connected: false }),
+  setRestPort: (port) => set({ restPort: port, hostInfo: null, printers: [], jobs: [], events: [], scanDevices: [], scanJobs: [], connected: false }),
   setSocketConnected: (v) => set({ socketConnected: v }),
   setConnected: (v) => set({ connected: v }),
 
@@ -83,11 +107,20 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   applyTestRun: (run) => set({ testRun: run }),
   applyHosts: (hosts) => set({ hosts }),
 
+  applyScanJob: (job) => {
+    const rest = get().scanJobs.filter((j) => j.id !== job.id)
+    set({
+      scanJobs: [job, ...rest]
+        .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0))
+        .slice(0, 200),
+    })
+  },
+
   refresh: async () => {
     const { restPort } = get()
     const client = createOpsClient(restPort)
     try {
-      const [info, printersRes, jobsRes, eventsRes, pairing, settingsRes, hostsRes] = await Promise.all([
+      const [info, printersRes, jobsRes, eventsRes, pairing, settingsRes, hostsRes, scanDevicesRes, scanJobsRes] = await Promise.all([
         client.systemInfo(),
         client.printers('admin'),
         client.jobs({ limit: 200 }),
@@ -95,6 +128,8 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         client.pairingRequests(),
         client.settings(),
         client.discoveryHosts(),
+        client.scanDevices().catch(() => ({ devices: [] as ScanDevice[] })),
+        client.scanJobs().catch(() => ({ jobs: [] as ScanJob[] })),
       ])
       set({
         hostInfo: info,
@@ -105,10 +140,78 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         pairingRequests: pairing.requests,
         settings: settingsRes.settings,
         hosts: hostsRes.hosts,
+        scanDevices: scanDevicesRes.devices,
+        scanJobs: scanJobsRes.jobs,
         lastRefreshAt: Date.now(),
       })
     } catch {
       set({ connected: false })
     }
+  },
+
+  refreshScan: async () => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const [devicesRes, jobsRes] = await Promise.all([
+      client.scanDevices().catch(() => ({ devices: [] as ScanDevice[] })),
+      client.scanJobs().catch(() => ({ jobs: [] as ScanJob[] })),
+    ])
+    set({ scanDevices: devicesRes.devices, scanJobs: jobsRes.jobs })
+  },
+
+  scanMdns: async () => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const { devices } = await client.scanMdns()
+    // 合并而非替换：GET /scan/devices 只返回 vscan+manual（mdns 结果后端不持久化），
+    // 现有设备全部保留；mdns 结果中 baseUrl 与任一现有设备相同的视为同一台跳过，其余追加
+    const existing = get().scanDevices
+    const seenBaseUrls = new Set(existing.map((d) => d.baseUrl))
+    const fresh = devices.filter((d) => !seenBaseUrls.has(d.baseUrl))
+    set({ scanDevices: [...existing, ...fresh] })
+    return devices
+  },
+
+  startScan: async (input) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const { job } = await client.startScan(input)
+    get().applyScanJob(job)
+    return job
+  },
+
+  cancelScanJob: async (id) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const { job } = await client.cancelScanJob(id)
+    get().applyScanJob(job)
+    return job
+  },
+
+  deleteScanJob: async (id) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    await client.deleteScanJob(id)
+    set({ scanJobs: get().scanJobs.filter((j) => j.id !== id) })
+  },
+
+  addScanDevice: async (input) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const { device } = await client.addScanDevice(input)
+    const exists = get().scanDevices.some((d) => d.id === device.id)
+    set({
+      scanDevices: exists
+        ? get().scanDevices.map((d) => (d.id === device.id ? device : d))
+        : [...get().scanDevices, device],
+    })
+    return device
+  },
+
+  removeScanDevice: async (id) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    await client.removeScanDevice(id)
+    set({ scanDevices: get().scanDevices.filter((d) => d.id !== id) })
   },
 }))

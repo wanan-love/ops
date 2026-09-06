@@ -19,6 +19,8 @@ import { CupsPrinterBackend } from './backends/cups'
 import { WindowsPrinterBackend } from './backends/windows'
 import { BackendJobRunner, BackendStatusSync } from './core/backend-jobs'
 import { VirtualIppServer } from './vipp/server'
+import { VirtualScanServer } from './vscan/server'
+import { ScanManager } from './core/scan'
 import { MdnsService } from './discovery/mdns'
 
 /** Host 门面上下文：所有模块的装配点（依赖注入，避免循环依赖） */
@@ -37,6 +39,10 @@ export interface HostContext {
   backends: BackendManager
   /** Virtual IPP Server（OPS_VIPP_ENABLED=0 时为 null） */
   vipp: VirtualIppServer | null
+  /** Virtual eSCL Scanner（OPS_VSCAN_ENABLED=0 或启动失败时为 null） */
+  vscan: VirtualScanServer | null
+  /** 扫描域管理器（P3 · eSCL：设备/任务/页面图像） */
+  scan: ScanManager
   /** 真实后端任务执行器（backend !== 'mock' 的打印机） */
   runner: BackendJobRunner
   /** 真实后端打印机状态同步（每 5s） */
@@ -119,6 +125,22 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     }
   }
 
+  // ---------------------------------------------------------------- Virtual eSCL Scanner（:3065）
+  const vscanEnabled = process.env.OPS_VSCAN_ENABLED !== '0'
+  const vscanPort = Number(process.env.OPS_VSCAN_PORT ?? 3065) || 3065
+  const vscanDataDir = process.env.OPS_VSCAN_DATA_DIR ?? resolve(dataDir, '..', 'virtual-scan')
+  let vscan: VirtualScanServer | null = null
+  if (vscanEnabled) {
+    vscan = new VirtualScanServer({ port: vscanPort, dataDir: vscanDataDir })
+    try {
+      await vscan.start()
+    } catch (err) {
+      console.error('[ops-host] Virtual eSCL Scanner 启动失败（继续以无 vscan 模式运行）：', err)
+      log.record({ type: 'host', topic: 'vscan', message: `Virtual eSCL Scanner 启动失败：${err instanceof Error ? err.message : String(err)}` })
+      vscan = null
+    }
+  }
+
   // ---------------------------------------------------------------- 统一后端
   const ippBackend = new IPPPrinterBackend({
     baseUri: `ipp://localhost:${vippPort}`,
@@ -135,8 +157,12 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
   const runner = new BackendJobRunner({ printers, jobs, storage, bus, log, backends })
   const statusSync = new BackendStatusSync({ printers, bus, log, backends })
 
-  // ---------------------------------------------------------------- mDNS（浏览 + Virtual IPP 自通告）
-  const mdns = new MdnsService({ bus, log, vipp })
+  // ---------------------------------------------------------------- mDNS（浏览 + Virtual IPP / Virtual Scanner 自通告；vscan 在 mdns 之前创建）
+  const mdns = new MdnsService({ bus, log, vipp, vscan })
+
+  // ---------------------------------------------------------------- 扫描域（P3 · eSCL）
+  const scan = new ScanManager({ storage, bus, log, scanUscan: () => mdns.scanUscan() })
+  await scan.load()
 
   const startedAt = Date.now()
 
@@ -153,6 +179,8 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     selfTest: null as unknown as SelfTestRunner, // 稍后注入（selftest 依赖 ctx）
     backends,
     vipp,
+    vscan,
+    scan,
     runner,
     statusSync,
     mdns,
@@ -181,6 +209,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         wsPort,
         dataDir,
         vippTlsPort: vipp?.tlsActivePort ?? null,
+        vscanPort: vscan?.port ?? null,
       }
     },
     restartSimulated(): void {
@@ -252,6 +281,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
       statusSync.stop()
       mdns.stop()
       vipp?.dispose()
+      vscan?.dispose()
       void printers.persistNow()
     },
   }
