@@ -244,13 +244,14 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                         {b.available ? '可用' : '当前环境不可用'}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">{b.note}</p>
+                    {/* break-words：说明含长 token（如 DC_PAPERNAMES/DC_DUPLEX/DC_COPIES/DC_BINNAMES）时必须可断行，防 393px 溢出 */}
+                    <p className="mt-1 text-[11px] leading-relaxed break-words text-muted-foreground/80">{b.note}</p>
                   </div>
                 </div>
               ))}
             </div>
           )}
-          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">
+          <p className="mt-3 text-[11px] leading-relaxed break-words text-muted-foreground/70">
             Core 通过统一 PrinterBackend 接口访问任意后端（listPrinters / getCapabilities / getStatus / submitJob / getJobStatus / cancelJob），平台差异全部隔离在后端层；可用性与平台信息均由运行时探测动态生成（不烘焙开发环境信息）。
             系统打印机自动发现：启动即同步 + 每 60s 周期同步（Windows 打印栈 / CUPS，幂等去重）。
             {devMode ? '' : '当前为正式运行模式：无任何虚拟设备。'}

@@ -6,6 +6,10 @@
 > **OpenPrintShare 只显示实际读取到的数据**——读取到的能力标注为 `SUPPORTED`（支持）；
 > 明确确认设备不支持的标注为 `UNSUPPORTED`（不支持）；读取不到的标注为 `UNKNOWN`（未知，
 > 不代表不支持）。UI 不会显示任何猜测或写死的数值（例如墨量读取不到时直接不显示墨量模块）。
+> Windows 宿主上的驱动级能力（纸盒列表 / 完整纸型 / 双面翻转模式 / 份数上限）经
+> DeviceCapabilities API（`DC_BINNAMES` / `DC_PAPERNAMES` / `DC_DUPLEX` / `DC_COPIES`）读取，
+> 仅提升 WMI 结论中的 UNKNOWN、不降级；墨量在 Windows 本地协议中无来源（WMI 与
+> DeviceCapabilities 均无该字段），仍依赖 SNMP / IPP 网络通道。
 
 ---
 

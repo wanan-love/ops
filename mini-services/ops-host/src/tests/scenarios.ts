@@ -29,6 +29,9 @@ import { pjlScenarios } from './scenarios-pjl'
  *
  * P4 追加（scenarios-pjl.ts，首个 Vendor Adapter 试点）：
  * 20. pjl-vendor-probe —— PJL over RAW 9100 双向探测（Virtual PJL :3067 → 状态/耗材回读 → VENDOR_API 融合）
+ *
+ * 审查迭代轮追加（真实性红线回归守卫）：
+ * 21. platform-runtime —— 平台运行时检测完整性（platform 三值合法 / 信号链非空 / 后端可用性说明含运行时检测 / devMode 隔离标记）
  */
 export type ScenarioId =
   | 'normal-print'
@@ -51,6 +54,7 @@ export type ScenarioId =
   | 'escl-duplex'
   | 'console-auth'
   | 'pjl-vendor-probe'
+  | 'platform-runtime'
 
 interface Scenario {
   id: ScenarioId
@@ -333,6 +337,38 @@ const scenarios: Scenario[] = [
       }
     },
   },
+  {
+    id: 'platform-runtime',
+    name: '平台运行时检测完整性',
+    description: 'HostInfo.platform 三值合法 + 检测信号链非空 + platformNote 含「运行时检测」+ Windows 后端可用性说明按运行平台动态生成 + devMode 隔离标记',
+    async run(api) {
+      const info = api.hostInfo()
+      api.step('读取 HostInfo', `platform=${info.platform} · devMode=${info.devMode ?? false} · 后端 [${(info.backends ?? []).join(',')}]`)
+      // 1. platform 必须是三值之一（动态检测结果，禁止出现编译期残留值）
+      api.expect(
+        info.platform === 'windows' || info.platform === 'macos' || info.platform === 'linux',
+        `platform 应为 windows/macos/linux 之一（实际 ${info.platform}）`,
+      )
+      // 2. 信号链非空且包含检测来源描述（用户可核验「为什么判定为该平台」）
+      const runtime = info.platformRuntime
+      api.expect(!!runtime && Array.isArray(runtime.signals) && runtime.signals.length >= 2, `运行时检测信号链应 ≥2 条（实际 ${runtime?.signals.length ?? 0}）`)
+      api.step('信号链', runtime?.signals.join('；').slice(0, 160) ?? '（缺失）')
+      api.expect(runtime?.platform === info.platform, `platformRuntime.platform 应与 platform 一致（${runtime?.platform} vs ${info.platform}）`)
+      // 3. platformNote 必须声明「运行时动态检测」（host.ts 对外文案契约：禁止烘焙固定文案；
+      //    注：文案为「运行时动态检测」，含「动态」二字——断言子串必须与产品文案精确一致）
+      api.expect(info.platformNote.includes('运行时动态检测'), 'platformNote 应包含「运行时动态检测」声明（运行时检测的对外文案契约）')
+      // 4. Windows 后端可用性说明按运行平台动态生成（本沙箱为 Linux → 应声明不可用 + 运行时检测）
+      const windowsNote = api.backendNote('windows')
+      if (windowsNote !== null) {
+        api.expect(windowsNote.includes('运行时检测'), 'Windows 后端可用性说明应含「运行时检测」')
+        const available = await api.backendAvailable('windows')
+        api.expect(available === (info.platform === 'windows'), `Windows 后端 available() 应与运行平台一致（platform=${info.platform}，available=${available}）`)
+        api.step('Windows 后端可用性', `说明动态生成（含运行时检测声明），available=${available}（platform=${info.platform} 一致）`)
+      }
+      // 5. devMode 隔离标记（自测仅在开发模式可跑：正式模式 403——路由层已验证，这里验证标记一致性）
+      api.expect(info.devMode === true, '开发模式下 devMode 应为 true（虚拟设备启用声明）')
+    },
+  },
 ]
 
 function durationMs(job: PrintJob): number {
@@ -389,9 +425,17 @@ export async function runScenarios(
         continue
       }
       const message = err instanceof ScenarioFailure ? err.message : err instanceof Error ? `${err.message}` : String(err)
-      const failedIdx = steps.length > 0 ? steps.length - 1 : 0
+      // 失败归因修复：断言失败时把「真实失败的断言」追加为独立步骤（ok:false）。
+      // 此前实现把最后一个「已成功」步骤翻转标记为失败 → 归因错位，误导排查
+      //（expect 抛出前不推步骤，最后一步往往是无关的前一个断言）。
+      const isAssertion = message.startsWith('断言失败：')
       const markedSteps = [...steps]
-      if (markedSteps.length > 0) markedSteps[markedSteps.length - 1] = { ...markedSteps[failedIdx], ok: false }
+      markedSteps.push({
+        name: isAssertion ? 'assert' : 'error',
+        detail: isAssertion ? message.slice('断言失败：'.length) : message,
+        ok: false,
+        at: new Date().toISOString(),
+      })
       result = {
         id: scenario.id,
         name: scenario.name,

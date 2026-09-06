@@ -44,6 +44,8 @@ export interface CapabilityReport {
   duplex: Capability<'none' | 'long-edge' | 'short-edge' | 'both'>
   maxCopies: Capability<number>
   paperSizes: Capability<string[]>
+  /** 纸盒/托盘列表（Windows DeviceCapabilities DC_BINNAMES；旧数据可能缺失该字段） */
+  paperTrays?: Capability<string[]>
   maxResolutionDpi: Capability<number>
   ppm: Capability<number>
   consumables: Capability<ConsumableInfo[]>
@@ -65,6 +67,8 @@ export interface PrinterCapabilities {
   duplex: 'none' | 'long-edge' | 'short-edge' | 'both'
   maxCopies: number
   paperSizes: string[]
+  /** 纸盒/托盘列表（可选：驱动级探测到才赋值） */
+  paperTrays?: string[]
   maxResolutionDpi: number
   ppm: number
 }
@@ -317,7 +321,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.4.2'
+export const OPS_VERSION = '0.4.3'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',

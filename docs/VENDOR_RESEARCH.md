@@ -12,7 +12,7 @@
 | 问题 | 答案 |
 |---|---|
 | **当前真实打印机能读取什么？** | 名称/型号/驱动/状态（在线·打印中·缺纸·卡纸·离线·门开）经 Windows WMI 或 CUPS/IPP；耗材百分比经 SNMP RFC 3805 `prtMarkerSuppliesLevel`（网络激光机普遍支持）；IPP driverless 机型可读 media/sides/copies/printer-state-reasons 等真实属性。墨量对「USB 消费级喷墨」经标准协议**读不到**（见 §3） |
-| **Windows 已实现什么？** | Win32_Printer 单查询枚举（名称/默认/驱动/端口/共享/网络）+ `DetectedErrorState` 官方错误码映射（无纸/卡纸/离线/门开）+ Capabilities 位掩码三态解析（彩色/双面/多份——位掩码不报告具体值时返回 UNKNOWN）+ `Start-Process -Verb PrintTo` 提交。**未实现**：DeviceCapabilities API 驱动级纸型/双面明细（见 §5 建议） |
+| **Windows 已实现什么？** | Win32_Printer 单查询枚举（名称/默认/驱动/端口/共享/网络）+ `DetectedErrorState` 官方错误码映射（无纸/卡纸/离线/门开）+ Capabilities 位掩码三态解析 + `Start-Process -Verb PrintTo` 提交（v0.4.3：PDF 临时文件传递，修复命令行长度上限）。**DeviceCapabilities API 驱动级能力已实现（P5 ✔ v0.4.3）**：DC_PAPERNAMES 纸型列表 / DC_DUPLEX 翻转模式 / DC_COPIES 份数上限 / DC_BINNAMES 纸盒列表 / DC_COLORDEVICE 彩色（只提升 UNKNOWN、不降级 WMI 结论；墨量仍无源 UNKNOWN） |
 | **CUPS/IPP 能实现什么？** | CUPS：lpstat 枚举 + IPP localhost:631 Get-Printer-Attributes 全套（media-supported/sides-supported/copies-supported/printer-state-reasons/marker-levels?）；IPP 直连：RFC 8010/8011 自研栈已支持 + ipps TLS。IPP `marker-levels` 属**可选属性**——很多机型不返回，必须 UNKNOWN 容忍 |
 | **厂商驱动额外实现了什么？** | 官方驱动比标准协议多的是：墨量精确图形界面（私有双向通道）、维修件计数、纸盒明细、色彩管理。通道 = 厂商私有 SNMP MIB（HP/Lexmark 公开可下载；Ricoh NDA；Kyocera/KM 不公开）、PJL INFO 扩展（HP 发明、Brother 变体）、私有 HTTP/EWS |
 | **哪些功能目前可靠可做？** | ① SNMP RFC 3805（已实现）② PJL INFO STATUS（已实现；SUPPLY 需真机抓包）③ IPP 属性（已实现）④ Windows WMI（已实现）⑤ HP-LASERJET-COMMON-MIB / LEXMARK-MIB 厂商适配（公开 MIB，证据充分，可作下两个 Vendor Adapter）⑥ Windows DeviceCapabilities API（微软官方 API，驱动级真实能力） |
@@ -44,7 +44,7 @@
 ### 1.4 Windows Win32 打印栈
 - **官方定义**：Microsoft Learn——Win32_Printer（WMI/CIM）、DeviceCapabilities API（wingdi.h）、DEVMODE 结构。
 - **可靠可读（已实现）**：Win32_Printer 的 Name/DriverName/PortName/**Default**/Shared/Local/Network/Comment/Location；`PrinterStatus`（3 Idle/4 Printing/5 Warmup/6 Stopped/7 Offline）；**`DetectedErrorState`**（0 未知/2 无错/3 低纸/4 无纸/5 低墨/6 无墨/7 门开/8 卡纸/9 离线/10 服务请求/11 出纸器满）；Capabilities 位掩码（4 黑白/8 彩色/16 双面/32 多份/64 排序/128 装订）。
-- **可靠可读（未实现——见 §5）**：DeviceCapabilities API `DC_PAPERS/DC_PAPERSIZE`（驱动级完整纸型列表——**比 WMI DefaultPaperType 单值强得多**）、`DC_DUPLEX`（双面位掩码：1=单面/2=长边/3=短边——**可区分翻转模式，WMI 做不到**）、`DC_COPIES`（真实份数上限——**WMI 位 32 只说支持多份**）、`DC_BINS`（纸盒列表）、`DC_COLORDEVICE`。
+- **可靠可读（P5 已实现 · v0.4.3）**：DeviceCapabilities API `DC_PAPERS/DC_PAPERSIZE`（驱动级完整纸型列表——**比 WMI DefaultPaperType 单值强得多**）、`DC_DUPLEX`（双面模式：1=单面/2=长边/3=短边——**可区分翻转模式，WMI 做不到**；位掩码/常量双解释保守映射）、`DC_COPIES`（真实份数上限——**WMI 位 32 只说支持多份**）、`DC_BINNAMES`（纸盒列表——新增 paperTrays 能力轴）、`DC_COLORDEVICE`（驱动级彩色）。实现：PowerShell `Add-Type` 内联 C# P/Invoke，单次查询全部 5 项，仅 Windows 宿主执行，探测失败仅记 probe 不覆盖既有值，TTL 缓存 10 分钟。
 - **不可读**：墨量/耗材（WMI 无标准字段——微软官方无此接口，社区帖确认需走 SNMP 或厂商 SDK）。
 - **结论**：DeviceCapabilities 是 Windows 上「驱动真实能力」的权威来源，实现它符合真实性红线（比 WMI 位掩码更精确且同样官方）。
 
@@ -98,7 +98,7 @@
 
 ## 5. 下一步功能建议（按证据强度排序，先研究后开发原则）
 
-1. **Windows DeviceCapabilities API 适配**（微软官方 wingdi.h；DC_PAPERS/DC_DUPLEX/DC_COPIES/DC_BINS/DC_COLORDEVICE）——驱动级真实能力，比 WMI 位掩码精确一个数量级；实现路径：PowerShell `Add-Type` P/Invoke 或 C# 内联。**证据充分，建议 P5 首选**。
+1. ~~**Windows DeviceCapabilities API 适配**~~ **✅ P5 已完成（v0.4.3）**：`src/backends/devicecaps.ts`（Add-Type P/Invoke 单次查询 5 项）+ windows.ts 双层能力（WMI 基线 → DC 只提升 UNKNOWN）+ paperTrays 能力轴（前后端 + merge）+ 45s 枚举缓存 + 场景 21 platform-runtime 平台守卫 + PDF 临时文件提交修复。真机验收待 Windows 硬件。
 2. **HP 私有 MIB 适配器**（HP-LASERJET-COMMON-MIB 公开）——维修件计数/页计数/纸盒增强，第二个 Vendor Adapter。
 3. **Lexmark MIB 适配器**（官方文档 + LEXMARK-MPS-MIB 公开）——同上并列。
 4. **Brother PJL SUPPLY 真机抓包适配**——需要真机（当前无，保持试点声明）。

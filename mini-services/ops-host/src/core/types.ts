@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.4.2'
+export const OPS_VERSION = '0.4.3'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -69,6 +69,8 @@ export interface CapabilityReport {
   duplex: Capability<'none' | 'long-edge' | 'short-edge' | 'both'>
   maxCopies: Capability<number>
   paperSizes: Capability<string[]>
+  /** 纸盒/托盘列表（P5：Windows DeviceCapabilities DC_BINNAMES；其它来源读不到时为 unknown） */
+  paperTrays: Capability<string[]>
   maxResolutionDpi: Capability<number>
   ppm: Capability<number>
   consumables: Capability<ConsumableInfo[]>
@@ -105,6 +107,8 @@ export interface PrinterCapabilities {
   duplex: 'none' | 'long-edge' | 'short-edge' | 'both'
   maxCopies: number
   paperSizes: string[]
+  /** 纸盒/托盘列表（可选：真实后端 DC_BINNAMES 探测到才赋值；未知 ≠ 空列表） */
+  paperTrays?: string[]
   maxResolutionDpi: number
   /** 标称速度（页/分钟，虚拟打印机即可调模拟速度） */
   ppm: number

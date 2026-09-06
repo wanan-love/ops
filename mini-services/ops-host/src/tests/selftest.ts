@@ -1,5 +1,5 @@
 import type { HostContext } from '../host'
-import type { DiscoveredIpPrinter, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
+import type { DiscoveredIpPrinter, BackendKind, HostInfo, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
 import { probePjlStatus, probePjlSupply } from '../backends/pjl'
 import { connect } from 'node:net'
@@ -223,6 +223,13 @@ export interface ScenarioApi {
   pjlSendRaw(data: string): Promise<void>
   /** 轮询等待打印机满足状态条件（IPP 后端状态同步 5s 轮询恢复等；超时抛 ScenarioFailure） */
   waitForPrinterStatus(printerId: string, predicate: (printer: Printer) => boolean, timeoutMs?: number): Promise<Printer>
+  // ---- 平台运行时检测（真实性红线）----
+  /** 当前 HostInfo 快照（platform / platformRuntime 信号链 / devMode / 后端列表） */
+  hostInfo(): HostInfo
+  /** 指定后端的可用性说明（动态 getter 输出；null = 后端未装配） */
+  backendNote(kind: BackendKind): string | null
+  /** 指定后端 available()（运行时检测；null = 后端未装配） */
+  backendAvailable(kind: BackendKind): Promise<boolean | null>
 }
 
 export class ScenarioFailure extends Error {
@@ -494,6 +501,17 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
         }
         await new Promise((r) => setTimeout(r, 500))
       }
+    },
+    hostInfo() {
+      return ctx.hostInfo()
+    },
+    backendNote(kind) {
+      const backend = ctx.backends.get(kind)
+      return backend ? backend.availabilityNote : null
+    },
+    async backendAvailable(kind) {
+      const backend = ctx.backends.get(kind)
+      return backend ? await backend.available() : null
     },
   }
 }

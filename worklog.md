@@ -533,3 +533,22 @@ Stage Summary:
 - 项目状态：稳定（20/20、lint 0、零溢出、零 console error、正式模式红线全绿、CI 预期绿、已推送）
 - 已知风险/未验证：①Windows 真机全链路（Win32_Printer 枚举/PrintTo 提交/DetectedErrorState 状态）在本 Linux 沙箱无法执行——代码对齐微软官方文档语义，需真机验收 ②bun --target=windows-x64 的 process.platform 行为（Bun 文档应为 win32；多信号设计已兜底 env 信号优先）③autosync 60s 周期在打印机极多的机器上的 PowerShell 开销量（Win32_Printer 单查询已最小化进程数）④存量 dev 数据目录（17 台测试打印机）在正式模式会被隐藏但仍占磁盘——正式部署用全新 data-dir 即无此问题
 - 下一阶段优先建议（按 VENDOR_RESEARCH.md 证据强度）：①P5：Windows DeviceCapabilities API 适配（微软官方 wingdi.h：DC_PAPERS 纸型列表/DC_DUPLEX 翻转模式/DC_COPIES 真实上限/DC_BINS 纸盒——驱动级真实能力，比 WMI 位掩码精确）②P6：HP-LASERJET-COMMON-MIB 公开 MIB 适配器（维修件计数）③Brother PJL SUPPLY 真机抓包 ④真实 Windows 硬件验证轮 ⑤Android/iOS 原生化
+
+---
+Task ID: 任务审查与持续迭代建立轮（P5 验收）
+Agent: main-agent
+Task: 新建「任务审查与持续迭代」cron 任务 + 验收被中断轮遗留的 P5 DeviceCapabilities WIP（用户指令第 7 项收尾）
+
+Work Log:
+- 【cron 任务建立】清理两个死任务（363800 exec limits 禁用 / 363203 stopped）→ 新建 **364017「OpenPrintShare 任务审查与持续迭代」**（fixed_rate 900s / Asia/Shanghai / webDevReview）：完整迭代指令（读 worklog 拆解 todo → agent-browser 经网关 :81 QA → Next dev/ops-host 存活检查与重启命令 → bug 优先修复 → 真实性红线原则（凌驾堆功能指令）→ P5 WIP 交接 → 下一阶段建议）。⚠️ 平台执行配额仍受限（创建即标 Disabled due to exec limits exceeded——今日多轮迭代已耗额度），额度恢复后自动开始执行
+- 【WIP 发现与溯源】git 工作树 10 文件未提交（新 devicecaps.ts + windows.ts/merge.ts/types 前后端/scenarios/selftest/runtime/printers-view/package.json v0.4.3）——被禁用 cron 轮（15:22 开始 P5 实施、15:59 被禁用中断）遗留，无 worklog 记录未验证；运行中 host（14:58 启动）未加载该代码；代码审查确认质量高（P/Invoke 双端口重试/TTL 缓存/双解释保守映射/只提升不降级）
+- 【验收发现 3 个真实 bug 并修复】①场景 21 断言字符串不匹配：断言 platformNote 含「运行时检测」，实际文案「运行时**动态**检测」（子串不匹配）→ 修正断言；②自测 runner 失败归因错位（既有 bug）：断言失败时把「最后一个已成功」步骤翻转为 ok:false（expect 抛出前不推步骤）→ 真实失败仅在 error 字段、步骤归因完全错位误导排查 → 修复为真实失败断言独立追加步骤；③backends-view 说明段落无断词保护：WIP 新增说明含 46 字符不可断行 token（DC_PAPERNAMES/DC_DUPLEX/DC_COPIES/DC_BINNAMES）→ 393px 溢出 36px → 加 break-words
+- 【验收流程】编译检查（bun build --outdir 通过 + devicecaps 打包在位）→ host 重启加载 v0.4.3 → 全量自测 **21/21**（tr-mtq2bwju-4558）→ 零残留清理（clear-test-data：36 测试打印机/54 任务/32 测试运行 + 21 扫描任务逐个 DELETE → 种子 2 台/9 历史任务/0）→ agent-browser 经 :81：概览页 v0.4.3/运行时检测信号链/运行模式断言、打印机页纸盒 CapRow（UNKNOWN 如实 + 旧数据隐藏向后兼容）、后端页 Windows 动态说明（运行时检测+DeviceCapabilities）、修复后 10 tab × 393px 零溢出 + 4 tab × 1280px 零溢出 + 零 console error；API 验证 paperTrays 数据链路（refresh 后报告含该字段）；lint 0/0
+- 【文档】VENDOR_RESEARCH.md P5 ✅ 三处（速览表/§1.4/§5）；README badge v0.4.3 + 21/21 + 特性 bullet + 场景清单 + Roadmap 17；USAGE.md 能力声明补 DeviceCapabilities 来源与墨量无源说明
+
+Stage Summary:
+- 交付：①「任务审查与持续迭代」cron 任务 364017 建立（用户 7 项指令全部收尾）；②P5 Windows DeviceCapabilities WIP 完整验收（修复 3 bug）并提交推送——WMI→DC 双层能力（只提升不降级）+ paperTrays 新能力轴 + PDF 临时文件提交修复 + 平台检测优先级修订 + 场景 21 平台守卫，v0.4.3
+- 排查方法论备忘：本轮「不可能的断言失败」（linux === linux 为 false）实为 runner 归因错位 + 断言字符串不匹配的组合表象——诊断靠 error 字段与失败步骤消息比对 + 临时 DEBUG 步骤（typeof/charCodes）定位；输出显示层会吞「[m」类子串（显示 artifact，hexdump 原始字节可甄别）
+- 项目状态：稳定（21/21、lint 0、双视口零溢出、零 console error、零残留、CI 预期绿）
+- 已知风险/未验证：①cron 平台执行配额恢复时间未知（任务已注册，恢复后自动迭代）；②DeviceCapabilities 真机行为（DC_DUPLEX 双解释映射命中率、Add-Type 首次编译开销、NULL 端口重试覆盖面）待 Windows 硬件；③场景 21 的 devMode=true 断言仅开发模式（正式模式 403 已由路由层保证）
+- 下一阶段优先建议（VENDOR_RESEARCH.md §5 证据强度）：①P6 HP-LASERJET-COMMON-MIB 适配器（维修件计数，第二个 Vendor Adapter）②Brother PJL SUPPLY 真机抓包（无真机不宣称）③扫描亮度/对比度 eSCL 透传④Android/iOS 原生化⑤真实硬件验证轮

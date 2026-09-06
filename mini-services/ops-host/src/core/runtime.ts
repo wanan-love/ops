@@ -6,17 +6,20 @@ import { release, type, version } from 'node:os'
  *
  * 原则：
  *  - 平台必须由「实际运行环境」决定，禁止使用开发环境/编译环境的固定值；
- *  - 多信号交叉验证：运行时环境变量（宿主 OS 注入，不可能被 bun build 内联）
- *    优先级高于 process.platform（bun --target 交叉编译时等于编译目标——
- *    目标平台正确运行时两者一致，异常场景下运行时信号更可信）；
+ *  - 多信号交叉验证，优先级（高 → 低）：
+ *    1. process.env.OS === 'Windows_NT'（Windows 系统自身注入的运行时环境变量，
+ *       bun build 绝不内联——编译期无法伪造）
+ *    2. /proc/version 存在（Linux 内核运行时特征文件）
+ *    3. /System/Library/CoreServices/SystemVersion.plist 存在（macOS 运行时特征文件）
+ *    4. process.platform（Bun --target 交叉编译时等于「编译目标」而非宿主——
+ *       仅在前三个信号全部缺失时才作为兜底；正常部署下与宿主一致）
+ *    5. 终极兜底：linux（最保守判定，不覆盖任何已确认信号）
+ *  - ⚠️ 文件系统特征探测（信号 2/3）优先于 process.platform 的原因：
+ *    bun --target=windows-x64 产物内 process.platform 恒为 'win32'（编译目标），
+ *    若该二进制被运行在非 Windows 宿主上（Wine/模拟层/误部署），
+ *    特征文件探测仍能给出真实宿主判定 —— 这是「运行时检测」的实质保证。
  *  - 每个信号都记录来源，platformRuntimeDetail() 供 HostInfo/UI/日志展示，
  *    用户可核验「为什么判定为该平台」。
- *
- * 信号优先级（高 → 低）：
- *   1. process.env.OS === 'Windows_NT'（Windows 系统自身注入，运行时真实值）
- *   2. process.platform === 'win32' | 'darwin'（Bun 交叉编译目标；正常部署下与宿主一致）
- *   3. /proc/version 存在（Linux 内核运行时特征文件）
- *   4. 兜底：linux（最保守判定，不用于覆盖任何已确认信号）
  */
 
 export type RuntimePlatform = 'windows' | 'macos' | 'linux'
@@ -26,9 +29,9 @@ export interface RuntimePlatformDetail {
   platform: RuntimePlatform
   /** 命中的检测信号（人类可读，供 UI / 日志核验） */
   signals: string[]
-  /** 运行时 os.release()（Windows 形如 10.0.19045；Linux 内核版本） */
+  /** 运行时 os.release()（Windows 形如 10.0.19045；Linux 内核版本；Darwin 内核版本） */
   release: string
-  /** 运行时 os.version()（Windows 形如 "Windows 10 Home"） */
+  /** 运行时 os.version()（Windows 形如 "Windows 10 Home"；Linux/macOS 构建串） */
   version: string
   /** 运行时 os.type()（Windows_NT / Linux / Darwin） */
   type: string
@@ -59,28 +62,35 @@ export function runtimePlatformDetail(): RuntimePlatformDetail {
     return cachedDetail
   }
 
-  // 信号 2：process.platform（bun --target 交叉编译时等于编译目标；宿主即目标时正确）
+  // 信号 2：Linux 内核运行时特征（文件系统真实探测，优先于 process.platform）
+  if (existsSync('/proc/version')) {
+    signals.push(`process.platform=${process.platform}`, '/proc/version 存在（Linux 内核特征）')
+    cachedDetail = { platform: 'linux', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
+    return cachedDetail
+  }
+
+  // 信号 3：macOS 运行时特征（CoreServices 目录仅存在于 macOS；探测失败不等于否定——兜底到信号 4）
+  if (existsSync('/System/Library/CoreServices/SystemVersion.plist')) {
+    signals.push(`process.platform=${process.platform}`, '/System/Library/CoreServices/SystemVersion.plist 存在（macOS 特征）')
+    cachedDetail = { platform: 'macos', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
+    return cachedDetail
+  }
+
+  // 信号 4：process.platform（交叉编译时为编译目标；前三信号缺失时兜底）
   const p = process.platform
   if (p === 'win32') {
-    signals.push('process.platform=win32')
+    signals.push('process.platform=win32（无文件系统特征信号时的兜底判定）')
     cachedDetail = { platform: 'windows', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
     return cachedDetail
   }
   if (p === 'darwin') {
-    signals.push('process.platform=darwin')
+    signals.push('process.platform=darwin（无文件系统特征信号时的兜底判定）')
     cachedDetail = { platform: 'macos', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
     return cachedDetail
   }
   signals.push(`process.platform=${p}`)
 
-  // 信号 3：Linux 内核运行时特征（文件系统真实探测）
-  if (existsSync('/proc/version')) {
-    signals.push('/proc/version 存在（Linux 内核特征）')
-    cachedDetail = { platform: 'linux', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
-    return cachedDetail
-  }
-
-  // 兜底（信号不足时的最保守判定；process.platform 非 win32/darwin 且无 /proc 的场景极罕见）
+  // 终极兜底（前三信号与 win32/darwin 均未命中；极罕见场景）
   signals.push('无更强信号 → 兜底 linux')
   cachedDetail = { platform: 'linux', signals, release: safeOs(release), version: safeOs(version), type: safeOs(type) }
   return cachedDetail

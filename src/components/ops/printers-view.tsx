@@ -195,6 +195,8 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
                 <CapRow label="双面" cap={report.duplex} render={(v) => (v === 'none' ? '仅单面' : v === 'both' ? '长边 + 短边' : v === 'long-edge' ? '长边' : '短边')} />
                 <CapRow label="份数上限" cap={report.maxCopies} render={(v) => `1–${v}`} />
                 <CapRow label="纸张尺寸" cap={report.paperSizes} render={(v) => v.join(' / ')} />
+                {/* 纸盒列表（v0.4.3 新增能力维度：Windows DeviceCapabilities DC_BINNAMES；旧数据/其它来源可能缺失） */}
+                {report.paperTrays && <CapRow label="纸盒" cap={report.paperTrays} render={(v) => `${v.length} 个（${v.join(' / ')}）`} />}
                 <CapRow label="分辨率" cap={report.maxResolutionDpi} render={(v) => `${v} dpi`} />
                 <CapRow label="速度" cap={report.ppm} render={(v) => `${v} ppm`} />
                 <CapRow

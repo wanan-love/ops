@@ -38,6 +38,7 @@ export function emptyReport(source: CapabilitySource, detail?: string): Capabili
     duplex: unknownCap(source, detail),
     maxCopies: unknownCap(source, detail),
     paperSizes: unknownCap(source, detail),
+    paperTrays: unknownCap(source, detail),
     maxResolutionDpi: unknownCap(source, detail),
     ppm: unknownCap(source, detail),
     consumables: unknownCap(source, detail),
@@ -58,8 +59,11 @@ export function errorReport(source: CapabilitySource, error: string): Capability
 }
 
 function pickCap<T>(inputs: ReportInput[], key: keyof CapabilityReport, rank: (s: CapabilitySource) => number): Capability<T> {
-  const candidates = inputs.map((input, idx) => ({ cap: input.report[key] as Capability<T>, idx }))
-  // 空输入保护（如 Mock 打印机无 backendKey 且无旧报告时 inputs=[]）→ 全 unknown，不猜测
+  // 防御：旧数据（paperTrays 引入前的存量报告）可能缺失新增字段——undefined 视作 unknown，不参与合并
+  const candidates = inputs
+    .map((input, idx) => ({ cap: input.report[key] as Capability<T> | undefined, idx }))
+    .filter((c): c is { cap: Capability<T>; idx: number } => c.cap !== undefined)
+  // 空输入保护（如 Mock 打印机无 backendKey 且无旧报告，或所有报告都缺该字段）→ 全 unknown，不猜测
   if (candidates.length === 0) return unknownCap('UNKNOWN', '无可用探测来源（后端未报告且无历史报告）')
   // 排序：已知态在前（unknown 永远排在已知之后）→ 来源优先级小者在前 → 输入顺序在前（新报告优先覆盖旧值）
   candidates.sort((a, b) => {
@@ -91,6 +95,7 @@ export function mergeReports(inputs: ReportInput[], sourcePriority: CapabilitySo
     duplex: pickCap(inputs, 'duplex', rank),
     maxCopies: pickCap(inputs, 'maxCopies', rank),
     paperSizes: pickCap(inputs, 'paperSizes', rank),
+    paperTrays: pickCap(inputs, 'paperTrays', rank),
     maxResolutionDpi: pickCap(inputs, 'maxResolutionDpi', rank),
     ppm: pickCap(inputs, 'ppm', rank),
     consumables: pickCap(inputs, 'consumables', rank),
@@ -122,13 +127,17 @@ export function resolveEffectiveCaps(report: CapabilityReport): PrinterCapabilit
       : report.paperSizes.state === 'unsupported'
         ? ['A4']
         : ['A4', 'Letter']
+  const paperTrays: string[] | undefined =
+    report.paperTrays?.state === 'supported' && Array.isArray(report.paperTrays.value) && report.paperTrays.value.length > 0
+      ? report.paperTrays.value
+      : undefined
   const maxResolutionDpi: number =
     report.maxResolutionDpi.state === 'supported' && typeof report.maxResolutionDpi.value === 'number' && report.maxResolutionDpi.value > 0
       ? Math.floor(report.maxResolutionDpi.value)
       : 600
   const ppm: number =
     report.ppm.state === 'supported' && typeof report.ppm.value === 'number' && report.ppm.value > 0 ? Math.floor(report.ppm.value) : 12
-  return { color, duplex, maxCopies, paperSizes, maxResolutionDpi, ppm }
+  return { color, duplex, maxCopies, paperSizes, paperTrays, maxResolutionDpi, ppm }
 }
 
 /** 生成一条成功 probe */
