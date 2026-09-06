@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install web deps
+        run: bun install --frozen-lockfile
+      - name: Install host deps
+        run: cd mini-services/ops-host && bun install --frozen-lockfile || bun install
+      - name: Lint web
+        run: bun run lint
+      - name: Host smoke test
+        run: |
+          cd mini-services/ops-host
+          (bun index.ts &) 
+          sleep 4
+          curl -sf http://localhost:3001/api/system/info | grep -q openprintshare-host
+          curl -sf -X POST http://localhost:3001/api/tests/run -H 'content-type: application/json' -d '{"ids":["normal-print"]}' > /dev/null
+          sleep 8
+          curl -sf http://localhost:3001/api/tests/runs | grep -q '"pass"'
+          echo "host smoke test OK"
