@@ -292,7 +292,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.3.2'
+export const OPS_VERSION = '0.3.3'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',
@@ -333,6 +333,14 @@ export interface ScanDevice {
 
 export type ScanJobState = 'pending' | 'scanning' | 'completed' | 'failed' | 'cancelled'
 
+/** 扫描任务已导出 PDF 的元数据（与 Host 端 core/types 对齐） */
+export interface ScanJobPdfExport {
+  exportedAt: string
+  pages: number
+  bytes: number
+  durationMs: number
+}
+
 export interface ScanJob {
   id: string
   deviceId: string
@@ -345,6 +353,8 @@ export interface ScanJob {
   pagesDone: number
   pagesTotal: number
   images: string[]
+  /** 按需 PDF 导出结果（null/undefined = 未导出） */
+  pdf?: ScanJobPdfExport | null
   error: string | null
   startedAt: string
   finishedAt: string | null

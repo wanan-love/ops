@@ -316,7 +316,9 @@ function SelfTestPanel({ scenarios }: { scenarios: ScenarioMeta[] }) {
     setStarting(true)
     try {
       await client.runTests()
-      toast.info('自动化测试已启动', { description: '10 个场景顺序执行（约 30–40 秒），实时进度见下方' })
+      toast.info('自动化测试已启动', {
+        description: `${scenarios.length || '全部'} 个场景顺序执行（约 1 分钟），实时进度见下方`,
+      })
     } catch (e) {
       toast.error('启动失败', { description: (e as Error).message })
     } finally {
@@ -350,8 +352,9 @@ function SelfTestPanel({ scenarios }: { scenarios: ScenarioMeta[] }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">
-          覆盖：正常打印 / 离线 / 恢复 / 缺纸 / 卡纸 / 打印失败 / 取消任务 / 多任务排队 / 并发任务 / Host 重启。每个场景创建隔离的 TEST 虚拟打印机，
-          工件落盘 <code className="rounded bg-muted px-1 font-mono text-[10px]">./data/mock-printer/</code>。
+          覆盖：正常打印 / 离线 / 恢复 / 缺纸 / 卡纸 / 失败 / 取消 / 排队 / 并发 / Host 重启 / IPP 全链路 / 能力未知容错 / IPP 取消 / mDNS 发现 / ipps TLS /
+          eSCL 扫描 / 扫描 PDF 导出。每个场景创建隔离的 TEST 虚拟打印机，工件落盘{' '}
+          <code className="rounded bg-muted px-1 font-mono text-[10px]">./data/mock-printer/</code>，全部通过后自动清理。
         </p>
 
         {run && (

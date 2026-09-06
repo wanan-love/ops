@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Download,
   FileImage,
+  FileText,
   Loader2,
   Plus,
   RadioTower,
@@ -99,13 +100,22 @@ function jobSummary(job: ScanJob): string {
   return parts.join(' · ')
 }
 
+/** 字节数人性化（KB/MB） */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
 /** 单个扫描任务卡片（内部维护当前预览页码） */
 function ScanJobCard({ job }: { job: ScanJob }) {
   const client = useOpsClient()
   const startScan = useOpsStore((s) => s.startScan)
   const cancelScanJob = useOpsStore((s) => s.cancelScanJob)
   const deleteScanJob = useOpsStore((s) => s.deleteScanJob)
+  const exportScanPdf = useOpsStore((s) => s.exportScanPdf)
   const [currentPage, setCurrentPage] = useState(1)
+  const [exporting, setExporting] = useState(false)
 
   const pageCount = Math.max(1, job.images.length)
   const page = Math.min(Math.max(1, currentPage), pageCount)
@@ -158,6 +168,41 @@ function ScanJobCard({ job }: { job: ScanJob }) {
       a.remove()
       URL.revokeObjectURL(url)
       toast.success('已下载扫描图像', { description: `ops-scan-${job.id}-p${page}.png` })
+    } catch (e) {
+      toast.error('下载失败', { description: (e as Error).message })
+    }
+  }
+
+  /** 导出 PDF（幂等：后端已导出则复用缓存） */
+  const exportPdf = async () => {
+    setExporting(true)
+    try {
+      const updated = await exportScanPdf(job.id)
+      toast.success('已导出 PDF', {
+        description: updated.pdf ? `${updated.pdf.pages} 页 · ${formatBytes(updated.pdf.bytes)}（A4 合成）` : undefined,
+      })
+    } catch (e) {
+      toast.error('PDF 导出失败', { description: (e as Error).message })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  /** 下载导出的 PDF */
+  const downloadPdf = async () => {
+    try {
+      const res = await fetch(client.scanPdfUrl(job.id))
+      if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ops-scan-${job.id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('已下载 PDF', { description: `ops-scan-${job.id}.pdf` })
     } catch (e) {
       toast.error('下载失败', { description: (e as Error).message })
     }
@@ -260,11 +305,40 @@ function ScanJobCard({ job }: { job: ScanJob }) {
               </Button>
             </div>
           ) : null}
+          {/* PDF 导出信息行（已导出时显示） */}
+          {job.pdf ? (
+            <p className="flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+              <FileText className="size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">
+                PDF 已生成：{job.pdf.pages} 页 · {formatBytes(job.pdf.bytes)} · A4
+              </span>
+              <span className="shrink-0 font-mono text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
+                {formatTime(job.pdf.exportedAt)}
+              </span>
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => void download()}>
               <Download className="size-3.5" aria-hidden />
               下载 PNG
             </Button>
+            {job.pdf ? (
+              <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => void downloadPdf()}>
+                <FileText className="size-3.5" aria-hidden />
+                下载 PDF
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-primary hover:text-primary"
+                onClick={() => void exportPdf()}
+                disabled={exporting}
+              >
+                {exporting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <FileText className="size-3.5" aria-hidden />}
+                {exporting ? '导出中…' : '导出 PDF'}
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => void rescan()}>
               <RefreshCw className="size-3.5" aria-hidden />
               重新扫描
@@ -575,9 +649,12 @@ export function ScanView() {
                   </Select>
                 </div>
 
-                <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <FileImage className="size-3.5 shrink-0" aria-hidden />
-                  本版本输出 PNG 图像页
+                <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <FileImage className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span>
+                    输出 PNG 图像页（逐页预览/下载）；完成后可<span className="text-foreground/80">导出 PDF</span>
+                    （A4 合成 · 横图自动转横向页）
+                  </span>
                 </p>
 
                 <Button className="w-full" onClick={() => void submit()} disabled={submitting || !selectedDevice}>

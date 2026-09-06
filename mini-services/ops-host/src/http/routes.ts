@@ -335,6 +335,31 @@ export function buildRouter(): Router {
     }
   })
 
+  /** 按需导出 PDF（P3.5）：completed 任务多页 PNG → A4 合成 PDF（幂等缓存） */
+  router.post('/api/scan/jobs/:id/export-pdf', async (ctx, _req, res, params) => {
+    try {
+      const job = await ctx.scan.exportJobPdf(params.id)
+      sendJson(res, 200, { job })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      sendError(res, message.includes('不存在') ? 404 : 400, message)
+    }
+  })
+
+  /** 下载导出的 PDF（二进制；未导出 404） */
+  router.get('/api/scan/jobs/:id/pdf', async (ctx, _req, res, params) => {
+    const job = ctx.scan.getJob(params.id)
+    if (!job) return sendError(res, 404, `扫描任务不存在：${params.id}`)
+    const bytes = await ctx.scan.getJobPdfBytes(job)
+    if (!bytes) return sendError(res, 404, `任务 ${params.id} 尚未导出 PDF（先调用 POST /api/scan/jobs/${params.id}/export-pdf）`)
+    res.writeHead(200, {
+      'content-type': 'application/pdf',
+      'content-disposition': `attachment; filename="ops-scan-${job.id}.pdf"`,
+      'cache-control': 'no-store',
+    })
+    res.end(bytes)
+  })
+
   router.delete('/api/scan/jobs/:id', async (ctx, _req, res, params) => {
     const ok = await ctx.scan.removeJob(params.id)
     if (!ok) return sendError(res, 404, `扫描任务不存在：${params.id}`)

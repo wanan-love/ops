@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.3.2'
+export const OPS_VERSION = '0.3.3'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -359,6 +359,17 @@ export interface ScanDevice {
 
 export type ScanJobState = 'pending' | 'scanning' | 'completed' | 'failed' | 'cancelled'
 
+/** 扫描任务已导出 PDF 的元数据（按需合成：document.pdf 落盘后记录，重复导出幂等复用） */
+export interface ScanJobPdfExport {
+  exportedAt: string
+  /** PDF 页数（= 导出时已完成的图像页数） */
+  pages: number
+  /** 文件字节数（展示用） */
+  bytes: number
+  /** 导出耗时（ms） */
+  durationMs: number
+}
+
 /** 扫描任务 */
 export interface ScanJob {
   id: string
@@ -372,6 +383,8 @@ export interface ScanJob {
   pagesDone: number
   pagesTotal: number
   images: string[]
+  /** 按需 PDF 导出结果（null/undefined = 未导出；仅 completed 任务可导出） */
+  pdf?: ScanJobPdfExport | null
   error: string | null
   startedAt: string
   finishedAt: string | null

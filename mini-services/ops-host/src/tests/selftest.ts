@@ -196,6 +196,11 @@ export interface ScenarioApi {
   cancelScan(jobId: string): Promise<ScanJob>
   /** 读取某页 PNG 字节（1-based；null = 无图像） */
   scanArtifactBytes(job: ScanJob, page: number): Promise<Uint8Array | null>
+  // ---- PDF 导出（P3.5）----
+  /** 按需导出 PDF（幂等；非 completed 抛 ScenarioFailure） */
+  exportScanPdf(jobId: string): Promise<ScanJob>
+  /** 读取导出的 PDF 字节（null = 未导出或文件缺失） */
+  scanPdfBytes(job: ScanJob): Promise<Uint8Array | null>
 }
 
 export class ScenarioFailure extends Error {
@@ -390,6 +395,17 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
     },
     async scanArtifactBytes(job, page) {
       const bytes = await ctx.scan.getJobImageBytes(job, page)
+      return bytes ? new Uint8Array(bytes) : null
+    },
+    async exportScanPdf(jobId) {
+      try {
+        return await ctx.scan.exportJobPdf(jobId)
+      } catch (err) {
+        throw new ScenarioFailure(err instanceof Error ? err.message : String(err))
+      }
+    },
+    async scanPdfBytes(job) {
+      const bytes = await ctx.scan.getJobPdfBytes(job)
       return bytes ? new Uint8Array(bytes) : null
     },
   }

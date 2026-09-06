@@ -22,6 +22,9 @@ import { scanScenarios } from './scenarios-scan'
  *
  * P3 追加（scenarios-scan.ts）：
  * 16. escl-full-flow —— eSCL 扫描全链路（vscan 虚拟扫描仪）
+ *
+ * P3.5 追加（scenarios-scan.ts）：
+ * 17. scan-pdf-export —— 扫描 PDF 按需导出（多页 PNG → A4 合成，幂等缓存）
  */
 export type ScenarioId =
   | 'normal-print'
@@ -40,6 +43,7 @@ export type ScenarioId =
   | 'mdns-local-discovery'
   | 'ipps-full-flow'
   | 'escl-full-flow'
+  | 'scan-pdf-export'
 
 interface Scenario {
   id: ScenarioId

@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { PDFDocument } from 'pdf-lib'
 import type { FileStorage } from './storage'
 import type { EventBus } from './eventbus'
 import type { EventLog } from './eventlog'
@@ -7,19 +8,22 @@ import type { VirtualScanServer } from '../vscan/server'
 import { EsclClient, EsclHttpError } from '../backends/escl/client'
 
 /**
- * ScanManager — 扫描域管理器（P3 · eSCL）。
+ * ScanManager — 扫描域管理器（P3 · eSCL + P3.5 按需 PDF 导出）。
  *
  * 职责：
  *  - 扫描设备列表（vscan 静态档案 + 手动添加 manual + mDNS 实时发现）
  *  - 扫描任务生命周期：createScanJob（eSCL POST）→ 后台逐页取图（NextDocument，
  *    409 未就绪重试 / 404 取完）→ 每页落盘 scan-jobs/{id}/page-{n}.png → completed
  *  - 取消（eSCL DELETE，幂等）/ 删除（元数据 + 图像目录）
+ *  - 按需 PDF 导出（P3.5）：completed 任务多页 PNG → pdf-lib 合成，A4 等比适配
+ *    居中（横图自动横向页）→ 落盘 scan-jobs/{id}/document.pdf，幂等复用缓存
  *  - 状态变化经 bus 'scan:update' 广播（WS 实时层转发）
  *
  * 持久化（复用 FileStorage 目录约定，node:fs 直写二进制）：
- *  - scan-devices.json          手动添加的扫描仪
- *  - scan-jobs/{id}/job.json    ScanJob + eSCL jobUrl
- *  - scan-jobs/{id}/page-n.png  每页图像
+ *  - scan-devices.json           手动添加的扫描仪
+ *  - scan-jobs/{id}/job.json     ScanJob + eSCL jobUrl
+ *  - scan-jobs/{id}/page-n.png   每页图像
+ *  - scan-jobs/{id}/document.pdf 按需导出的合成 PDF（删任务随目录清理）
  */
 
 /** job.json 落盘形态：ScanJob + eSCL 任务 URL（取消/排查用，不出现在 API 响应） */
@@ -347,6 +351,94 @@ export class ScanManager {
     if (!rel) return null
     try {
       return await fs.readFile(this.opts.storage.path(`scan-jobs/${job.id}/${rel}`))
+    } catch {
+      return null
+    }
+  }
+
+  // ---------------------------------------------------------------- PDF 导出（P3.5）
+
+  /**
+   * 按需导出 PDF：completed 任务的全量 PNG 页 → pdf-lib 合成 A4（横图自动横向页，
+   * 等比适配居中、18pt 边距）→ 落盘 scan-jobs/{id}/document.pdf。
+   * 幂等：job.pdf 元数据存在且 document.pdf 可读 → 直接返回（不重复合成）。
+   */
+  async exportJobPdf(id: string): Promise<ScanJob> {
+    const stored = this.jobs.get(id)
+    if (!stored) throw new Error(`扫描任务不存在：${id}`)
+    const { job } = stored
+    if (job.state !== 'completed') {
+      throw new Error(`仅已完成的扫描任务可导出 PDF（当前状态：${job.state}）`)
+    }
+    if (job.images.length === 0) throw new Error('任务无图像页可导出')
+    // 幂等复用：元数据 + 文件均在 → 直接返回
+    if (job.pdf) {
+      const cached = await this.getJobPdfBytes(job)
+      if (cached) {
+        this.opts.log.record({ type: 'job', topic: 'scan:pdf', message: `PDF 导出复用缓存：${job.id}（${job.pdf.pages} 页，${job.pdf.bytes} bytes）`, data: { jobId: job.id } })
+        return { ...job }
+      }
+    }
+
+    const started = Date.now()
+    const doc = await PDFDocument.create()
+    doc.setTitle(`OPS Scan ${job.id}`)
+    doc.setProducer('OpenPrintShare Scan PDF Export')
+    doc.setCreator('OpenPrintShare Host')
+    doc.setCreationDate(new Date(job.startedAt))
+    // A4 尺寸（pt）；边距
+    const A4_W = 595.28
+    const A4_H = 841.89
+    const MARGIN = 18
+    for (let i = 0; i < job.images.length; i++) {
+      const png = await this.getJobImageBytes(job, i + 1)
+      if (!png) throw new Error(`第 ${i + 1} 页图像缺失（${job.images[i]}）`)
+      const image = await doc.embedPng(png)
+      const { width: iw, height: ih } = image.scale(1)
+      // 横图 → 横向 A4；竖图 → 纵向 A4（每页独立判定，混合方向任务正确排版）
+      const landscape = iw > ih
+      const pw = landscape ? A4_H : A4_W
+      const ph = landscape ? A4_W : A4_H
+      const page = doc.addPage([pw, ph])
+      const availW = pw - MARGIN * 2
+      const availH = ph - MARGIN * 2
+      const scale = Math.min(availW / iw, availH / ih)
+      const drawW = iw * scale
+      const drawH = ih * scale
+      page.drawImage(image, {
+        x: (pw - drawW) / 2,
+        y: (ph - drawH) / 2,
+        width: drawW,
+        height: drawH,
+      })
+    }
+    const bytes = await doc.save()
+    const pdfPath = this.opts.storage.path(`scan-jobs/${job.id}/document.pdf`)
+    await fs.mkdir(this.opts.storage.path(`scan-jobs/${job.id}`), { recursive: true })
+    await fs.writeFile(pdfPath, bytes)
+
+    job.pdf = {
+      exportedAt: new Date().toISOString(),
+      pages: job.images.length,
+      bytes: bytes.byteLength,
+      durationMs: Date.now() - started,
+    }
+    await this.persistJob(stored)
+    this.opts.bus.emit('scan:update', { job })
+    this.opts.log.record({
+      type: 'job',
+      topic: 'scan:pdf',
+      message: `扫描任务已导出 PDF：${job.id}（${job.pdf.pages} 页，${job.pdf.bytes} bytes，${job.pdf.durationMs}ms）`,
+      data: { jobId: job.id },
+    })
+    return { ...job }
+  }
+
+  /** 读取导出的 PDF 字节（未导出或文件缺失返回 null） */
+  async getJobPdfBytes(job: ScanJob): Promise<Buffer | null> {
+    if (!job.pdf) return null
+    try {
+      return await fs.readFile(this.opts.storage.path(`scan-jobs/${job.id}/document.pdf`))
     } catch {
       return null
     }

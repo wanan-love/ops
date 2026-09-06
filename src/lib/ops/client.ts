@@ -52,6 +52,16 @@ export function scanImageUrl(port: number, jobId: string, page: number): string 
   return restUrl(port, path)
 }
 
+/** 扫描导出 PDF 下载 URL（与 scanImageUrl 同模式：网关/直连） */
+export function scanPdfUrl(port: number, jobId: string): string {
+  const path = `/scan/jobs/${encodeURIComponent(jobId)}/pdf`
+  if (OPS_DIRECT_MODE && typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http'
+    return `${proto}://${window.location.hostname}:${port}/api${path}`
+  }
+  return restUrl(port, path)
+}
+
 export class ApiError extends Error {
   constructor(
     public code: number,
@@ -216,6 +226,9 @@ export function createOpsClient(port: number) {
     cancelScanJob: (id: string) => request<{ job: ScanJob }>(port, 'POST', `/scan/jobs/${encodeURIComponent(id)}/cancel`),
     deleteScanJob: (id: string) => request<{ ok: boolean }>(port, 'DELETE', `/scan/jobs/${encodeURIComponent(id)}`),
     scanImageUrl: (jobId: string, page: number) => scanImageUrl(port, jobId, page),
+    // PDF 导出（P3.5：completed 任务多页 PNG → A4 合成，幂等缓存）
+    exportScanPdf: (id: string) => request<{ job: ScanJob }>(port, 'POST', `/scan/jobs/${encodeURIComponent(id)}/export-pdf`),
+    scanPdfUrl: (jobId: string) => scanPdfUrl(port, jobId),
   }
 }
 

@@ -54,6 +54,7 @@ interface OpsState {
   startScan: (input: { deviceId: string; format?: string; dpi?: number; colorMode?: string; inputSource?: string }) => Promise<ScanJob>
   cancelScanJob: (id: string) => Promise<ScanJob>
   deleteScanJob: (id: string) => Promise<void>
+  exportScanPdf: (id: string) => Promise<ScanJob>
   addScanDevice: (input: { baseUrl: string; name?: string }) => Promise<ScanDevice>
   removeScanDevice: (id: string) => Promise<void>
 }
@@ -193,6 +194,14 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     const client = createOpsClient(restPort)
     await client.deleteScanJob(id)
     set({ scanJobs: get().scanJobs.filter((j) => j.id !== id) })
+  },
+
+  exportScanPdf: async (id) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const { job } = await client.exportScanPdf(id)
+    get().applyScanJob(job)
+    return job
   },
 
   addScanDevice: async (input) => {
