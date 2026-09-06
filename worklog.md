@@ -335,3 +335,26 @@ Stage Summary:
 - 交付物：main@b50ac36（11 文件，+627/-42）、docs/USAGE.md、docs/VENDOR_PROTOCOLS.md
 - 未验证项（需真实硬件）：CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS
 - 下一阶段优先级（见 VENDOR_PROTOCOLS.md P1 清单）：①SNMP hrPrinterDetectedErrorState + community 可配置 ②ipps:// TLS ③Host 控制台鉴权 ④Android/iOS 原生化（NsdManager 发现）
+
+---
+Task ID: 5（cron 迭代轮）
+Agent: main-agent
+Task: P1 标准协议增强（SNMP HOST-RESOURCES 状态 + community 可配置）+ 既有 bug 修复
+
+Work Log:
+- 开工核查：CI 全绿（ci ×3 + docker ×1）、:3000/:3001/:3002/:3061 全监听、QA 基线 9 tab 零溢出、自测 14/14 → 项目稳定，选 worklog 上一轮建议的 P1 清单作为本轮重点
+- 【P1-① SNMP 状态二级来源】snmp.ts：probeSnmpStatus（walk hrDeviceType 定位 printer 设备索引 → snmpGet 多 OID 单次往返读 hrPrinterStatus + hrPrinterDetectedErrorState → 位掩码 RFC 2790 TC 12 位解析 → 条件映射 paper-out/paper-jam/error/online/busy；status=null 不覆盖不猜测）；BER 解码增强（string 变体带 raw 字节、新 oid 变体、GetRequest a0 编码）
+- 【路由融合】refresh-capabilities：probeSnmpConsumables + probeSnmpStatus 并行，SNMP 硬条件仅在 printer 当前 online/busy 时覆盖（IPP 已有具体状态优先）；community 从 settings 传递
+- 【P1-② community 可配置】HostSettings.snmpCommunity（types/settings 白名单）+ PATCH /api/settings 校验（1-64 非空白）+ 配对页「SNMP 探测设置」卡片（Input+保存+企业机说明）
+- 【P1-④】driverless 判定补 image/urf（AirPrint）
+- 【QA 发现并修复既有 bug】merge.ts pickCap 空输入（mergeReports([])）→ candidates[0] 越界 500：Mock 打印机（无 backendKey 无旧报告）点刷新能力可触发 → 空输入返回全 unknown（不猜测）
+- 【QA 发现并修复 UI 同步 bug】保存 SNMP community 后输入框不回显：saveSnmpCommunity/toggleSecurity 补 await refresh()（store settings 仅 refresh() 更新，host:update 事件只带 HostInfo）
+- 验证：临时单测 12 断言全过（手工 BER 构造 GetResponse/两字节掩码 bit10/bit11/latin1 回退/hrDeviceType OID 值/无 agent 失败不抛出）后删除；Host 重启 ×3（含一次 routes.ts 类型位置 as const 语法错误修复）；14/14 自测；vipp refresh 实测 IPP ok + SNMP ECONNREFUSED 仅记 probe、能力保留、状态不动；settings 校验（合法保存/非法 400/还原）；浏览器输入→保存→回显全链路（393px + 1280px）；lint 0 error
+- 文档：VENDOR_PROTOCOLS.md P1 标记 ✅ 已完成、USAGE.md 墨量排查补 community 配置指引、README SNMP 行更新
+- git 02a3a89 推送 main
+
+Stage Summary:
+- 交付：SNMP 状态探测（HOST-RESOURCES hrPrinterDetectedErrorState 位掩码：缺纸/卡纸/门开/耗材告警）+ community 可配置（API + UI）+ driverless image/urf + 2 个 QA 发现的 bug 修复（merge 空输入 500、设置保存后不同步）
+- 本地验证完备；SNMP 状态/community 对真实设备的实际效果待硬件验证（预期企业机型收益最大：Ricoh/Kyocera/KM/Xerox 常关 IPP 只留 SNMP）
+- 项目当前状态：稳定（CI 全绿、14/14、零溢出、lint 0）
+- 下一阶段优先建议：①P2 ipps:// TLS（自签容忍 + TOFU）②P3 eSCL 扫描后端（_uscan._tcp 发现，对齐 sane-airscan）③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Host 控制台鉴权 ⑤Android/iOS 原生化（NsdManager）
