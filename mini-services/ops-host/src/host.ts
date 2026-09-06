@@ -91,7 +91,15 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
 
   const bus = new EventBus()
   const log = new EventLog(storage, bus)
-  const settings = new SettingsStore(storage)
+  // 控制台令牌签发时的旁路通知（日志 + 事件总线），供 realtime 断开存量 WS 连接
+  const settings = new SettingsStore(storage, (token, reason) => {
+    log.record({
+      type: 'security',
+      topic: 'console-auth',
+      message: `控制台访问令牌已${reason === 'enable' ? '生成（鉴权启用）' : '重新生成'}：${token.slice(0, 12)}…（完整值见 data/console-token.txt）`,
+    })
+    bus.emit('console-auth', { enabled: true, reason })
+  })
   await settings.load()
 
   const printers = new PrinterRegistry(storage, bus, log)
@@ -205,6 +213,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         backends: backends.kinds(),
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         securityMode: s.securityMode,
+        consoleAuthEnabled: settings.consoleAuthEnabled(),
         restPort,
         wsPort,
         dataDir,

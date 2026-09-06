@@ -44,6 +44,7 @@ export type ScenarioId =
   | 'ipps-full-flow'
   | 'escl-full-flow'
   | 'scan-pdf-export'
+  | 'console-auth'
 
 interface Scenario {
   id: ScenarioId
@@ -249,6 +250,81 @@ const scenarios: Scenario[] = [
       api.expect(after.timeline.some((e) => e.reason === 'host-restart'), '时间线应记录 host-restart')
       const done = await api.waitFor(job.id, (j) => j.state === 'completed')
       api.expect(done.progress === 100, '重启恢复后任务应完成')
+    },
+  },
+  {
+    id: 'console-auth',
+    name: '控制台鉴权（管理面令牌）',
+    description: '启用 → REST 401（带 code 标记）→ 令牌三通道放行（header/query/Bearer）→ 公白白名单 → 重生成旧令牌失效 → 关闭恢复开放',
+    async run(api) {
+      try {
+        // 0. 预备：确保从开放态开始
+        await api.setConsoleAuth(false)
+        const openBefore = await api.httpProbe('GET', '/api/printers')
+        api.expect(openBefore.status === 200, `开放态 GET /api/printers 应 200（实际 ${openBefore.status}）`)
+
+        // 1. 通过真实 HTTP 启用（公网白名单：收紧操作永远允许）
+        const enableRes = await api.httpProbe('POST', '/api/console/enable', { body: {} })
+        api.expect(enableRes.status === 200, `POST /api/console/enable 应 200（实际 ${enableRes.status}）`)
+        const token = enableRes.json?.token
+        api.expect(typeof token === 'string' && (token as string).startsWith('ops_') && (token as string).length >= 40, `应返回 ops_ 前缀令牌（实际 ${String(token).slice(0, 12)}…）`)
+        api.step('启用控制台鉴权', `令牌 ${String(token).slice(0, 12)}…（完整值已落盘 data/console-token.txt）`)
+
+        // 2. 无令牌 → 401 + console_auth_required 标记（前端据此弹解锁界面）
+        const denied = await api.httpProbe('GET', '/api/printers')
+        api.expect(denied.status === 401, `无令牌 GET /api/printers 应 401（实际 ${denied.status}）`)
+        api.expect(denied.json?.code === 'console_auth_required', '401 响应应携带 console_auth_required code 标记')
+
+        // 3. 伪令牌 → 401
+        const wrong = await api.httpProbe('GET', '/api/printers', { token: 'WRONG' })
+        api.expect(wrong.status === 401, `伪令牌应 401（实际 ${wrong.status}）`)
+
+        // 4. 有效令牌（header）→ 200
+        const okHeader = await api.httpProbe('GET', '/api/printers', { token: token as string })
+        api.expect(okHeader.status === 200, `有效令牌 header 应 200（实际 ${okHeader.status}）`)
+
+        // 5. query 通道（opsToken=）→ 200（<img>/下载链接兼容）
+        const okQuery = await api.httpProbe('GET', `/api/printers?opsToken=${encodeURIComponent(token as string)}`)
+        api.expect(okQuery.status === 200, `query opsToken 通道应 200（实际 ${okQuery.status}）`)
+
+        // 6. 公白白名单：system/info 无令牌可读（发现/探活），且带 consoleAuthEnabled 标志
+        const info = await api.httpProbe('GET', '/api/system/info')
+        api.expect(info.status === 200, `白名单 GET /api/system/info 应 200（实际 ${info.status}）`)
+        api.expect(info.json?.consoleAuthEnabled === true, 'HostInfo 应携带 consoleAuthEnabled=true')
+
+        // 7. 登录端点：伪令牌 401，有效令牌 200
+        const badLogin = await api.httpProbe('POST', '/api/console/auth', { body: { token: 'WRONG' } })
+        api.expect(badLogin.status === 401, `登录校验伪令牌应 401（实际 ${badLogin.status}）`)
+        const login = await api.httpProbe('POST', '/api/console/auth', { body: { token } })
+        api.expect(login.status === 200, `登录校验有效令牌应 200（实际 ${login.status}）`)
+
+        // 8. 设备配对轴不受控制台鉴权影响：POST /api/pairing/requests 无令牌可达（400 语义错误 ≠ 401 鉴权错误）
+        const pairing = await api.httpProbe('POST', '/api/pairing/requests', { body: {} })
+        api.expect(pairing.status === 400, `设备配对发起（空 body）应 400 语义错误而非 401（实际 ${pairing.status}）`)
+
+        // 9. 重生成：旧令牌立即失效、新令牌可用
+        const regen = await api.httpProbe('POST', '/api/console/token/regenerate', { token: token as string })
+        api.expect(regen.status === 200, `持旧令牌重生成应 200（实际 ${regen.status}）`)
+        const newToken = regen.json?.token
+        api.expect(typeof newToken === 'string' && newToken !== token, '应生成与旧值不同的新令牌')
+        const oldDead = await api.httpProbe('GET', '/api/printers', { token: token as string })
+        api.expect(oldDead.status === 401, `旧令牌重生成后应 401（实际 ${oldDead.status}）`)
+        const newOk = await api.httpProbe('GET', '/api/printers', { token: newToken as string })
+        api.expect(newOk.status === 200, `新令牌应 200（实际 ${newOk.status}）`)
+        api.step('重生成令牌', '旧令牌已失效，新令牌立即可用')
+
+        // 10. 关闭（需有效令牌）→ 恢复开放
+        const disableBad = await api.httpProbe('POST', '/api/console/disable', { token: 'WRONG' })
+        api.expect(disableBad.status === 401, `伪令牌关闭应 401（实际 ${disableBad.status}）`)
+        const disable = await api.httpProbe('POST', '/api/console/disable', { token: newToken as string })
+        api.expect(disable.status === 200, `持有效令牌关闭应 200（实际 ${disable.status}）`)
+        const reopened = await api.httpProbe('GET', '/api/printers')
+        api.expect(reopened.status === 200, `关闭后无令牌 GET /api/printers 应恢复 200（实际 ${reopened.status}）`)
+        api.step('关闭并恢复', `settings.consoleAuth = ${JSON.stringify((disable.json?.settings as { consoleAuth?: unknown })?.consoleAuth ?? null)}`)
+      } finally {
+        // 清理：无论成败都必须回到开放态，避免鉴权门影响后续场景/QA
+        await api.setConsoleAuth(false)
+      }
     },
   },
 ]

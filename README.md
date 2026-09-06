@@ -2,10 +2,10 @@
 
 > 跨平台局域网共享打印机 — 设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 设备自动发现并打印。
 
-[![Release](https://img.shields.io/badge/release-v0.3.0--cross--platform-emerald)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.0--cross--platform-emerald)](../../releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
 [![Backend](https://img.shields.io/badge/print%20backends-IPP%20%7C%20CUPS%20%7C%20Windows-teal)](#打印后端)
-[![Self-Test](https://img.shields.io/badge/self--test-16%2F16%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
+[![Self-Test](https://img.shields.io/badge/self--test-18%2F18%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
 
 > 📖 **新用户从零开始**：安装、配置、共享打印机、客户端打印、故障排查——见完整使用指南 **[docs/USAGE.md](docs/USAGE.md)**。
 
@@ -19,6 +19,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 - **优先兼容操作系统原生打印能力**：CUPS / IPP / IPP Everywhere / Bonjour(mDNS/DNS-SD) / Windows Print Spooler / Android Print Framework / AirPrint
 - **ipps:// TLS**：加密 IPP 传输，自签名证书自动容忍（TOFU）
 - **eSCL 扫描**：AirScan 标准扫描协议（mDNS `_uscan` 发现 · PNG 多页 · 实时进度 · 按需导出 A4 PDF）
+- **控制台鉴权（v0.4.0）**：管理面访问令牌（REST + WebSocket 握手校验；三通道传递 header/Bearer/`?opsToken=`）；与设备配对轴独立的两轴安全模型；令牌落盘防锁定；协议仿真端口豁免兼容真实客户端
 - **客户端尽量无需安装厂商驱动**，实际打印使用 Host（设备 A）上已安装的系统打印机与驱动
 - 切换真实打印机时，仅替换 Printer Backend，**Core / 协议 / 队列 / UI 零改动**
 
@@ -199,7 +200,7 @@ mini-services/ops-host/data/mock-printer/
 │   ├── src/vipp/                  # Virtual IPP Server（开发/测试工具）
 │   ├── src/vscan/                 # Virtual eSCL Scanner（开发/测试工具，:3065）
 │   ├── src/http/  src/ws/         # REST 路由（含静态 Web 服务）+ socket.io 实时层
-│   └── src/tests/                 # 16 场景自动化测试
+│   └── src/tests/                 # 18 场景自动化测试
 ├── clients/                       # 原生客户端
 │   ├── android/                   # WebView 壳（Kotlin/Gradle，连接局域网 Host）
 │   └── ios/                       # SwiftUI WKWebView 壳（Xcode 工程可直接 Build/Archive）
@@ -240,7 +241,7 @@ mini-services/ops-host/data/mock-printer/
 
 - `Virtual IPP Server`：本地 IPP 模拟服务（真实 RFC 8010/8011 二进制协议，明文 :3061 + TLS :3063 自签证书），供 CI/开发环境验证 IPPPrinterBackend 全链路（含 ipps）；四档能力档案用于测试能力三态模型（详见上表）。
 - `Virtual eSCL Scanner`：本地 eSCL 模拟扫描服务（HTTP + XML，:3065，vscan-flatbed 平板单页 / vscan-adf 送稿器多页，纯手写 PNG），供 CI/开发环境验证扫描全链路（含 mDNS `_uscan._tcp` 自通告）。
-- 自动化测试（17 场景：10 Mock + 5 IPP/mDNS（含 ipps TLS）+ 2 eSCL 扫描（全链路 + PDF 导出），含 Host 重启任务恢复）：`POST /api/tests/run` 或 Web 控制台「调试 · 开发测试」页一键运行，报告落盘 `test-runs/`。
+- 自动化测试（18 场景：10 Mock + 1 控制台鉴权 + 5 IPP/mDNS（含 ipps TLS）+ 2 eSCL 扫描（全链路 + PDF 导出），含 Host 重启任务恢复）：`POST /api/tests/run` 或 Web 控制台「调试 · 开发测试」页一键运行，报告落盘 `test-runs/`。
 
 ## 平台支持矩阵
 
@@ -275,6 +276,7 @@ docker compose up -d        # web :3000 + host :3001/:3002 + caddy 网关 :80
 - [x] 10. 真实打印 Backend（IPP ✔ Virtual IPP 全链路验证 / ipps TLS ✔ 自签容忍 TOFU / CUPS / Windows 代码完备待宿主验证 / 能力三态 / mDNS / SNMP）
 - [x] 11. 跨平台打包（单文件可执行 + .deb/.AppImage/.msi/.dmg/.apk + CI 自动构建发布）
 - [x] 12. eSCL 扫描全链路（P3 · v0.3.2：自研 eSCL 客户端 HTTP+XML + mDNS `_uscan._tcp` 发现 + Virtual eSCL Scanner :3065 + 前端扫描 tab + 实时任务/取消/多页；PDF 合成 ✔ v0.3.3 按需导出，双面扫描留后续）
+- [x] 15. Host 控制台鉴权（P2 安全轮 · v0.4.0：管理面令牌 REST/WS 全覆盖 + 解锁界面 + 防锁定落盘 + 令牌重生成/旧值立即失效 + 场景 18 自动化验证；与设备配对轴独立的两轴模型）
 - [ ] 13. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS 真机证书校验 / eSCL 真实扫描仪）
 - [ ] 14. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐）
 

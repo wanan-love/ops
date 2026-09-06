@@ -1,4 +1,4 @@
-import { Router, headerString, parseJsonBody, readBody, sendError, sendJson } from './router'
+import { Router, consoleAuthGate, extractConsoleToken, headerString, parseJsonBody, readBody, sendError, sendJson } from './router'
 import type { HostContext } from '../host'
 import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
 import type { BackendKind, CapabilityReport } from '../core/types'
@@ -548,11 +548,54 @@ export function buildRouter(): Router {
     sendJson(res, 200, { settings: ctx.settings.get() })
   })
 
+  // ---------------------------------------------------------------- console auth（P2 安全轮：管理面令牌）
+
+  /** 登录校验（公网白名单）：验证令牌 → 200 返回 HostInfo；失败 401 */
+  router.post('/api/console/auth', (ctx, req, res, _params, query, body) => {
+    const input = parseJsonBody<{ token?: string }>(body)
+    let token = input?.token ?? null
+    if (!token) token = extractConsoleToken(req, query)
+    if (!ctx.settings.verifyConsoleToken(token)) {
+      // 登录端点本身的 401 不携带 console_auth_required 标记（避免触发前端再次弹锁）
+      return sendError(res, 401, '访问令牌无效或缺失')
+    }
+    sendJson(res, 200, { ok: true, info: ctx.hostInfo() })
+  })
+
+  /** 启用（公网白名单，收紧永远允许）：总是生成全新令牌；响应返回完整值 + 落盘 data/console-token.txt 防锁定 */
+  router.post('/api/console/enable', async (ctx, _req, res) => {
+    const token = await ctx.settings.enableConsoleAuth()
+    ctx.log.record({ type: 'security', topic: 'console-auth', message: '控制台鉴权已启用：REST/WS 管理面需要访问令牌（协议端口 3061/3065 不受影响）' })
+    ctx.bus.emit('host:update', { info: ctx.hostInfo() })
+    sendJson(res, 200, { ok: true, token, settings: ctx.settings.get() })
+  })
+
+  /** 关闭（需有效令牌）：放开管理面 */
+  router.post('/api/console/disable', async (ctx, req, res, _params, query) => {
+    if (!consoleAuthGate(ctx, req, res, query)) return
+    await ctx.settings.disableConsoleAuth()
+    ctx.log.record({ type: 'security', topic: 'console-auth', message: '控制台鉴权已关闭：局域网管理面恢复开放' })
+    ctx.bus.emit('host:update', { info: ctx.hostInfo() })
+    sendJson(res, 200, { ok: true, settings: ctx.settings.get() })
+  })
+
+  /** 重生成令牌（需有效令牌）：旧值立即失效，WS 存量连接将被断开重连 */
+  router.post('/api/console/token/regenerate', async (ctx, req, res, _params, query) => {
+    if (!consoleAuthGate(ctx, req, res, query)) return
+    const token = await ctx.settings.regenerateConsoleToken()
+    ctx.log.record({ type: 'security', topic: 'console-auth', message: '控制台访问令牌已重新生成：此前保存的令牌全部失效' })
+    ctx.bus.emit('host:update', { info: ctx.hostInfo() })
+    sendJson(res, 200, { ok: true, token })
+  })
+
   router.patch('/api/settings', async (ctx, _req, res, _params, _query, body) => {
     const patch = parseJsonBody<{ hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }>(body)
     if (!patch) return sendError(res, 400, '请求体不是合法 JSON')
     if (patch.securityMode && patch.securityMode !== 'open' && patch.securityMode !== 'pairing') {
       return sendError(res, 400, 'securityMode 仅支持 open | pairing')
+    }
+    if (patch.hostName !== undefined && (typeof patch.hostName !== 'string' || patch.hostName.trim() === '')) {
+      return sendError(res, 400, 'hostName 需为非空字符串')
     }
     if (patch.snmpCommunity !== undefined) {
       const c = String(patch.snmpCommunity)

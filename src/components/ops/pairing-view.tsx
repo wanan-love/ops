@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { BadgeCheck, Fingerprint, KeyRound, Link2, Link2Off, MonitorSmartphone, Radio, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
+import { BadgeCheck, Copy, Eye, EyeOff, Fingerprint, KeyRound, Link2, Link2Off, Loader2, Lock, LockOpen, MonitorSmartphone, Radio, RefreshCcw, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useOpsClient, useOpsStore } from './store'
-import { useDevice, usePairedToken, useUpdatePairedToken } from '@/lib/ops/hooks'
+import { useConsoleToken, useDevice, usePairedToken, useUpdatePairedToken } from '@/lib/ops/hooks'
 import { formatTime } from './widgets'
 import type { Platform } from '@/lib/ops/types'
 
@@ -30,11 +31,80 @@ export function PairingView() {
   const requests = useOpsStore((s) => s.pairingRequests)
   const devices = useOpsStore((s) => s.devices)
   const refresh = useOpsStore((s) => s.refresh)
+  const consoleEnableAuth = useOpsStore((s) => s.consoleEnableAuth)
+  const consoleDisableAuth = useOpsStore((s) => s.consoleDisableAuth)
+  const consoleRegenerate = useOpsStore((s) => s.consoleRegenerate)
+  const consoleLogout = useOpsStore((s) => s.consoleLogout)
   const device = useDevice()
   const myToken = usePairedToken()
   const updateToken = useUpdatePairedToken()
+  const savedConsoleToken = useConsoleToken()
   const [requesting, setRequesting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const consoleAuthOn = settings?.consoleAuth?.enabled === true
+  // 服务器侧令牌（已授权时 settings 会返回完整值）；未授权时退回本端保存值（仅长度/前缀展示用）
+  const serverToken = settings?.consoleAuth?.token ?? null
+  const displayToken = serverToken ?? savedConsoleToken
+
+  const [tokenReveal, setTokenReveal] = useState(false)
+  const [enableBusy, setEnableBusy] = useState(false)
+  const [disableBusy, setDisableBusy] = useState(false)
+  const [regenBusy, setRegenBusy] = useState(false)
+  const [freshToken, setFreshToken] = useState<string | null>(null)
+
+  const copyToken = useCallback(async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(token)
+      toast.success('令牌已复制到剪贴板')
+    } catch {
+      toast.error('复制失败', { description: '请手动选中文本复制' })
+    }
+  }, [])
+
+  const enableConsoleAuth = useCallback(async () => {
+    setEnableBusy(true)
+    try {
+      const token = await consoleEnableAuth()
+      setFreshToken(token)
+      setTokenReveal(true)
+      toast.success('控制台鉴权已启用', {
+        description: `令牌已生成并保存在本端（${token.slice(0, 12)}…）；完整值同步落盘 data/console-token.txt`,
+      })
+    } catch (e) {
+      toast.error('启用失败', { description: (e as Error).message })
+    } finally {
+      setEnableBusy(false)
+    }
+  }, [consoleEnableAuth])
+
+  const disableConsoleAuth = useCallback(async () => {
+    setDisableBusy(true)
+    try {
+      await consoleDisableAuth()
+      setFreshToken(null)
+      setTokenReveal(false)
+      toast.info('控制台鉴权已关闭', { description: '局域网管理面恢复开放（本端保存的令牌已失效）' })
+    } catch (e) {
+      toast.error('关闭失败', { description: (e as Error).message })
+    } finally {
+      setDisableBusy(false)
+    }
+  }, [consoleDisableAuth])
+
+  const regenerateConsoleToken = useCallback(async () => {
+    setRegenBusy(true)
+    try {
+      const token = await consoleRegenerate()
+      setFreshToken(token)
+      setTokenReveal(true)
+      toast.success('令牌已重新生成', { description: `旧令牌立即失效，新令牌已保存（${token.slice(0, 12)}…）` })
+    } catch (e) {
+      toast.error('重生成失败', { description: (e as Error).message })
+    } finally {
+      setRegenBusy(false)
+    }
+  }, [consoleRegenerate])
 
   const pendingRequests = requests.filter((r) => r.status === 'pending')
 
@@ -253,6 +323,195 @@ export function PairingView() {
             企业级打印机（Ricoh / Kyocera / KM / Xerox 等）常将 SNMP community 改为非默认值；修改后到打印机页「刷新能力」即可用新值重试探测。
             读取不到时墨量显示 UNKNOWN（不代表不支持），详见故障排查文档。
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            {consoleAuthOn ? <Lock className="size-4 text-amber-600 dark:text-amber-400" aria-hidden /> : <LockOpen className="size-4 text-muted-foreground" aria-hidden />}
+            控制台访问控制
+            {consoleAuthOn ? (
+              <Badge variant="outline" className="gap-1 border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-400">
+                <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+                已启用
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-zinc-400" aria-hidden />
+                未启用
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-md border bg-muted/20 p-3">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {consoleAuthOn
+                ? 'REST 管理接口与实时通道需要访问令牌；设备打印 / 配对轴不受影响。协议仿真端口（IPP :3061 / eSCL :3065）保持开放以兼容真实客户端。'
+                : '启用后，局域网内未经授权的设备将无法查看/控制管理面（打印机配置、任务队列、扫描、测试等）。与上面的「设备配对」相互独立、可叠加使用。'}
+            </p>
+          </div>
+
+          {consoleAuthOn ? (
+            <>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">当前访问令牌{serverToken ? '' : '（服务器返回完整值需已授权）'}</Label>
+                  <div className="flex items-center gap-1">
+                    {displayToken && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+                          onClick={() => setTokenReveal((v) => !v)}
+                          aria-label={tokenReveal ? '隐藏令牌' : '显示令牌'}
+                        >
+                          {tokenReveal ? <EyeOff className="size-3" aria-hidden /> : <Eye className="size-3" aria-hidden />}
+                          {tokenReveal ? '隐藏' : '显示'}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+                          onClick={() => void copyToken(displayToken)}
+                          aria-label="复制令牌"
+                        >
+                          <Copy className="size-3" aria-hidden />
+                          复制
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {displayToken ? (
+                  <div className="flex min-h-10 items-center gap-2 overflow-x-auto rounded-md border border-dashed bg-muted/30 px-3 py-2 font-mono text-xs">
+                    {tokenReveal ? (
+                      <span className="tracking-wide break-all">{displayToken}</span>
+                    ) : (
+                      <span className="tracking-widest text-muted-foreground">{'•'.repeat(Math.min(displayToken.length, 44))}</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">本端未保存令牌（在其它设备上启用或已重生成）</p>
+                )}
+              </div>
+
+              {freshToken && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3" role="status">
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    <ShieldCheck className="size-3.5 shrink-0" aria-hidden />
+                    新令牌已生成并自动保存到本端
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                    完整值同步落盘 Host 数据目录 <code className="rounded bg-muted px-1 font-mono text-[10px]">console-token.txt</code>（权限 0600），遗忘时可从该文件恢复。
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={regenBusy}>
+                      {regenBusy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCcw className="size-3.5" aria-hidden />}
+                      重新生成令牌
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>重新生成访问令牌？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        当前令牌立即失效，所有已保存该令牌的设备（含本控制台以外的浏览器）需要更新为新值。本端会自动保存新令牌。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => void regenerateConsoleToken()}>确认重生成</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={disableBusy}>
+                      {disableBusy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LockOpen className="size-3.5" aria-hidden />}
+                      关闭鉴权
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>关闭控制台鉴权？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        局域网管理面将恢复开放（任何设备可查看/控制）。本端保存的令牌将失效并被清除。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => void disableConsoleAuth()}>确认关闭</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    consoleLogout()
+                    toast.info('已清除本端保存的令牌', { description: '解锁界面将重新出现（可重新输入令牌验证）' })
+                  }}
+                >
+                  <Link2Off className="size-3.5" aria-hidden />
+                  清除本端令牌
+                </Button>
+              </div>
+
+              <div className="rounded-md border border-l-2 border-l-primary/40 bg-muted/20 p-3" role="note" aria-label="API 调用示例（只读）">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-medium tracking-wide text-muted-foreground/70">API 调用示例（只读）</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 gap-1 px-1.5 text-[10px] text-muted-foreground"
+                    onClick={async () => {
+                      const cmd = `curl -H "x-ops-console-token: ${displayToken ?? '<token>'}" http://{host}:3001/api/printers`
+                      try {
+                        await navigator.clipboard.writeText(cmd)
+                        toast.success('curl 命令已复制')
+                      } catch {
+                        toast.error('复制失败', { description: '请手动选中文本复制' })
+                      }
+                    }}
+                    aria-label="复制完整 curl 命令"
+                  >
+                    <Copy className="size-3" aria-hidden />
+                    复制命令
+                  </Button>
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-muted-foreground/90">
+                  {`curl -H "x-ops-console-token: ${displayToken ?? '<token>'}" \\\n  http://{host}:3001/api/printers`}
+                </pre>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
+                  兼容通道：Authorization: Bearer &lt;token&gt; / ?opsToken=（图片与下载链接）
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                启用动作本身永远开放（收紧无门槛）：生成全新 ops_ 令牌（192-bit）、自动保存到本端、并落盘 Host 数据目录防锁定。
+                关闭与重生成则必须持有效令牌。建议生产环境：控制台鉴权 + 设备配对双开。
+              </p>
+              <Button size="sm" onClick={() => void enableConsoleAuth()} disabled={enableBusy}>
+                {enableBusy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Lock className="size-3.5" aria-hidden />}
+                启用控制台鉴权
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

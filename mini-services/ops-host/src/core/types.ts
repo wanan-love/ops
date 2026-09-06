@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.3.3'
+export const OPS_VERSION = '0.4.0'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -217,6 +217,11 @@ export interface HostSettings {
   securityMode: 'open' | 'pairing'
   /** SNMP v1/v2c community 字符串（耗材/状态探测用；企业机型常改为非默认值） */
   snmpCommunity?: string
+  /** 控制台访问控制（P2 安全轮：REST/WS 管理面令牌；与设备配对轴相互独立）
+   *  - enabled=false 时 token 恒为 null（启用时总是生成全新令牌，避免禁用期间的旧值泄露）
+   *  - token 仅在启用期间存在（settings.json 持久化，Host 重启后仍有效）
+   */
+  consoleAuth?: { enabled: boolean; token: string | null }
 }
 
 export interface PairedDevice {
@@ -334,6 +339,8 @@ export interface HostInfo {
   backends?: BackendKind[]
   uptimeSec: number
   securityMode: 'open' | 'pairing'
+  /** 控制台访问控制是否启用（公开信息：客户端需据此展示解锁界面，不含令牌本身） */
+  consoleAuthEnabled?: boolean
   restPort: number
   wsPort: number
   dataDir: string

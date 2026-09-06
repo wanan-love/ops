@@ -201,6 +201,14 @@ export interface ScenarioApi {
   exportScanPdf(jobId: string): Promise<ScanJob>
   /** 读取导出的 PDF 字节（null = 未导出或文件缺失） */
   scanPdfBytes(job: ScanJob): Promise<Uint8Array | null>
+  // ---- 控制台鉴权（P2 安全轮）----
+  /** 真实 HTTP 探测（127.0.0.1:{restPort}）：验证 REST 层鉴权行为（401/200 等）
+   *  token 省略 → 无鉴权头；'WRONG' → 伪令牌；其他 → x-ops-console-token 令牌 */
+  httpProbe(method: string, path: string, opts?: { token?: string; body?: unknown; raw?: boolean }): Promise<{ status: number; json: { error?: string; code?: string; [k: string]: unknown } | null; bodyText: string }>
+  /** 直改 settings（场景清理/预备：非 HTTP 通道，不受鉴权门影响） */
+  setConsoleAuth(enabled: boolean): Promise<void>
+  /** 读取当前控制台令牌（启用态；禁用态 null） */
+  consoleToken(): string | null
 }
 
 export class ScenarioFailure extends Error {
@@ -407,6 +415,33 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
     async scanPdfBytes(job) {
       const bytes = await ctx.scan.getJobPdfBytes(job)
       return bytes ? new Uint8Array(bytes) : null
+    },
+    // ---- 控制台鉴权（P2 安全轮）----
+    async httpProbe(method, path, opts) {
+      const headers: Record<string, string> = {}
+      if (opts?.body !== undefined) headers['content-type'] = 'application/json'
+      if (typeof opts?.token === 'string' && opts.token !== '') headers['x-ops-console-token'] = opts.token
+      const res = await fetch(`http://127.0.0.1:${ctx.restPort}${path}`, {
+        method,
+        headers,
+        body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      })
+      const bodyText = await res.text()
+      let json: { error?: string; code?: string; [k: string]: unknown } | null = null
+      try {
+        json = bodyText ? (JSON.parse(bodyText) as typeof json) : null
+      } catch {
+        json = null
+      }
+      return { status: res.status, json, bodyText }
+    },
+    async setConsoleAuth(enabled) {
+      if (enabled) await ctx.settings.enableConsoleAuth()
+      else await ctx.settings.disableConsoleAuth()
+      ctx.bus.emit('host:update', { info: ctx.hostInfo() })
+    },
+    consoleToken() {
+      return ctx.settings.consoleToken()
     },
   }
 }

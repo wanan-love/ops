@@ -159,6 +159,8 @@ export interface HostInfo {
   backends?: BackendKind[]
   uptimeSec: number
   securityMode: 'open' | 'pairing'
+  /** 控制台访问控制是否启用（公开信息，供客户端展示解锁界面） */
+  consoleAuthEnabled?: boolean
   restPort: number
   wsPort: number
   dataDir: string
@@ -173,6 +175,9 @@ export interface HostSettings {
   hostName: string
   securityMode: 'open' | 'pairing'
   snmpCommunity?: string
+  /** 控制台访问控制（P2 安全轮：管理面令牌，与设备配对轴独立）
+   *  token 仅在启用态非空（需已通过鉴权才能读到；禁用态为 null） */
+  consoleAuth?: { enabled: boolean; token: string | null }
 }
 
 export interface PairedDevice {
@@ -292,7 +297,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.3.3'
+export const OPS_VERSION = '0.4.0'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',

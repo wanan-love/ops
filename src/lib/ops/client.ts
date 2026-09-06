@@ -18,7 +18,14 @@ import type {
   SystemStats,
   TestRun,
 } from './types'
-import { getPairedToken, loadDevice } from './device'
+import { getConsoleToken, getPairedToken, loadDevice } from './device'
+
+/** 控制台鉴权 401 事件（request 层 → 全局解锁界面）：与设备配对 401 区分的专属标记 */
+export const CONSOLE_AUTH_REQUIRED_EVENT = 'ops:console-auth-required'
+
+function notifyConsoleAuthRequired(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(CONSOLE_AUTH_REQUIRED_EVENT))
+}
 
 /** 协议约定：REST {port} + Realtime {port+1}
  *  - 网关模式（默认/沙箱）：相对路径 + ?XTransformPort（Caddy 转发）
@@ -27,8 +34,15 @@ import { getPairedToken, loadDevice } from './device'
  */
 export const OPS_DIRECT_MODE = process.env.NEXT_PUBLIC_OPS_DIRECT === '1'
 
+/** 控制台令牌注入 query（<img>/下载链接无法带 header，全部 URL 追加 opsToken=；未启用时后端忽略） */
+function withOpsToken(url: string): string {
+  const token = getConsoleToken()
+  if (!token) return url
+  return url + (url.includes('?') ? '&' : '?') + 'opsToken=' + encodeURIComponent(token)
+}
+
 export function restUrl(port: number, path: string): string {
-  return `/api${path}${path.includes('?') ? '&' : '?'}XTransformPort=${port}`
+  return withOpsToken(`/api${path}${path.includes('?') ? '&' : '?'}XTransformPort=${port}`)
 }
 
 export function wsUrl(rtPort: number): string {
@@ -42,12 +56,13 @@ export function wsUrl(rtPort: number): string {
 /** 扫描结果图像 URL（PNG 页）
  *  - 网关模式：相对 /api + XTransformPort（与 restUrl 一致）
  *  - 直连模式：REST 独立端口绝对地址
+ *  两种模式均追加 opsToken=（<img> 标签无法携带鉴权 header）
  */
 export function scanImageUrl(port: number, jobId: string, page: number): string {
   const path = `/scan/jobs/${encodeURIComponent(jobId)}/image?page=${page}`
   if (OPS_DIRECT_MODE && typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'https' : 'http'
-    return `${proto}://${window.location.hostname}:${port}/api${path}`
+    return withOpsToken(`${proto}://${window.location.hostname}:${port}/api${path}`)
   }
   return restUrl(port, path)
 }
@@ -57,7 +72,7 @@ export function scanPdfUrl(port: number, jobId: string): string {
   const path = `/scan/jobs/${encodeURIComponent(jobId)}/pdf`
   if (OPS_DIRECT_MODE && typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'https' : 'http'
-    return `${proto}://${window.location.hostname}:${port}/api${path}`
+    return withOpsToken(`${proto}://${window.location.hostname}:${port}/api${path}`)
   }
   return restUrl(port, path)
 }
@@ -72,9 +87,13 @@ export class ApiError extends Error {
 }
 
 async function request<T>(port: number, method: string, path: string, opts?: { json?: unknown; raw?: ArrayBuffer; rawText?: string }): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (opts?.json !== undefined) headers['content-type'] = 'application/json'
+  const consoleToken = getConsoleToken()
+  if (consoleToken) headers['x-ops-console-token'] = consoleToken
   const res = await fetch(restUrl(port, path), {
     method,
-    headers: opts?.json !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers,
     body: opts?.json !== undefined ? JSON.stringify(opts.json) : opts?.rawText,
     cache: 'no-store',
   })
@@ -86,6 +105,10 @@ async function request<T>(port: number, method: string, path: string, opts?: { j
     data = text
   }
   if (!res.ok) {
+    // 控制台鉴权缺失/失效 → 全局解锁界面（设备配对 401 不带此 code，不弹锁）
+    if (res.status === 401 && (data as { code?: string } | null)?.code === 'console_auth_required') {
+      notifyConsoleAuthRequired()
+    }
     const message = (data as { error?: string } | null)?.error ?? `请求失败（HTTP ${res.status}）`
     throw new ApiError(res.status, message)
   }
@@ -95,12 +118,14 @@ async function request<T>(port: number, method: string, path: string, opts?: { j
 function encodeHeaders(extra: Record<string, string>): Record<string, string> {
   const device = loadDevice()
   const token = getPairedToken()
+  const consoleToken = getConsoleToken()
   return {
     'content-type': 'application/pdf',
     'x-ops-device': encodeURIComponent(device.deviceId),
     'x-ops-device-name': encodeURIComponent(device.deviceName),
     'x-ops-platform': 'web',
     ...(token ? { 'x-ops-token': token } : {}),
+    ...(consoleToken ? { 'x-ops-console-token': consoleToken } : {}),
     ...extra,
   }
 }
@@ -176,6 +201,12 @@ export function createOpsClient(port: number) {
     settings: () => request<{ settings: HostSettings }>(port, 'GET', '/settings'),
     updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }) =>
       request<{ settings: HostSettings }>(port, 'PATCH', '/settings', { json: patch }),
+
+    // console auth（P2 安全轮：管理面令牌）
+    consoleAuth: (token: string) => request<{ ok: boolean; info: HostInfo }>(port, 'POST', '/console/auth', { json: { token } }),
+    consoleEnable: () => request<{ ok: boolean; token: string; settings: HostSettings }>(port, 'POST', '/console/enable', { json: {} }),
+    consoleDisable: () => request<{ ok: boolean; settings: HostSettings }>(port, 'POST', '/console/disable', { json: {} }),
+    consoleRegenerateToken: () => request<{ ok: boolean; token: string }>(port, 'POST', '/console/token/regenerate', { json: {} }),
 
     // mock / debug 控制台
     setCondition: (id: string, condition: 'online' | 'offline' | 'paper-out' | 'paper-jam' | 'error', message?: string) =>

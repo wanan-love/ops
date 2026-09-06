@@ -16,6 +16,8 @@ export interface BusEvents {
   'vipp:update': { printer: VippPrinterSnapshot }
   /** 扫描任务状态变化（P3 · eSCL） */
   'scan:update': { job: ScanJob }
+  /** 控制台鉴权状态变化（P2 安全轮：启用/重生成 → realtime 断开存量 WS） */
+  'console-auth': { enabled: boolean; reason: 'enable' | 'regenerate' | 'disable' }
   /** 请求客户端重新拉取快照（Host 重启等） */
   'snapshot': Record<string, never>
 }

@@ -5,6 +5,8 @@ import { motion } from 'framer-motion'
 import { io, type Socket } from 'socket.io-client'
 import { FileUp, FlaskConical, History, KeyRound, LayoutDashboard, Printer, Radar, ScanLine, ScrollText, ServerCog } from 'lucide-react'
 import { wsUrl } from '@/lib/ops/client'
+import { getConsoleToken } from '@/lib/ops/device'
+import { useConsoleToken } from '@/lib/ops/hooks'
 import { useOpsStore } from './store'
 import type { HostInfo, OpsEvent, PairingRequest, PairedDevice, Printer as PrinterRef, PrintJob, ScanJob, TestRun, DiscoveredHost } from '@/lib/ops/types'
 import { OverviewView } from './overview-view'
@@ -17,6 +19,7 @@ import { PairingView } from './pairing-view'
 import { DebugView } from './debug-view'
 import { EventsView } from './events-view'
 import { BackendsView } from './backends-view'
+import { ConsoleAuthGate } from './console-auth-gate'
 import { Header } from './header'
 import { Footer } from './footer'
 
@@ -40,6 +43,8 @@ export default function OpsApp() {
   const restPort = useOpsStore((s) => s.restPort)
   const refresh = useOpsStore((s) => s.refresh)
   const socketConnected = useOpsStore((s) => s.socketConnected)
+  const consoleAuthRequired = useOpsStore((s) => s.consoleAuthRequired)
+  const consoleToken = useConsoleToken()
   const socketRef = useRef<Socket | null>(null)
 
   useEffect(() => {
@@ -47,22 +52,45 @@ export default function OpsApp() {
   }, [restPort, refresh])
 
   // 实时层（socket.io，经网关 ?XTransformPort=restPort+1）
+  // 令牌变更（登录/重生成/退出）→ 重建连接，携带最新 console token 握手
   useEffect(() => {
+    const token = getConsoleToken()
     const socket = io(wsUrl(restPort + 1), {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
       timeout: 8000,
+      auth: token ? { token } : undefined,
     })
     socketRef.current = socket
 
     const store = useOpsStore.getState()
+    // 握手被鉴权拒绝的标记：与「服务端主动断开」（enable 时 disconnectSockets）区分——
+    // socket.io 对 io server disconnect 不自动重连，需要手动 reconnect；但被拒后盲重连会无限循环，交给解锁门处理
+    let rejectedByAuth = false
     socket.on('connect', () => {
+      rejectedByAuth = false
       useOpsStore.getState().setSocketConnected(true)
       void useOpsStore.getState().refresh()
     })
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason: string) => {
       useOpsStore.getState().setSocketConnected(false)
+      if (reason === 'io server disconnect' && !rejectedByAuth) {
+        // 鉴权启用/重生成时服务端主动断开存量连接：带当前令牌手动重连（auth 需热更新，创建时的值已固化）
+        const t = getConsoleToken()
+        socket.auth = t ? { token: t } : undefined
+        setTimeout(() => {
+          if (!socket.connected) socket.connect()
+        }, 1000)
+      }
+    })
+    // 控制台鉴权拒绝（握手令牌无效）→ 全局解锁门
+    // 已持有令牌时忽略（WS 与令牌更新存在竞态，有效性以 REST 401 为准）
+    socket.on('auth:error', (data: { code?: string }) => {
+      if (data?.code === 'console_auth_required') {
+        rejectedByAuth = true
+        if (!getConsoleToken()) window.dispatchEvent(new CustomEvent('ops:console-auth-required'))
+      }
     })
     socket.on('job:update', (job: PrintJob) => store.applyJob(job))
     socket.on('printer:update', (printer: PrinterRef) => store.applyPrinter(printer))
@@ -80,7 +108,7 @@ export default function OpsApp() {
       socket.disconnect()
       socketRef.current = null
     }
-  }, [restPort])
+  }, [restPort, consoleToken])
 
   // WS 断开时的兜底轮询
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -169,23 +197,27 @@ export default function OpsApp() {
       </nav>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        <motion.div
-          key={tab}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2, ease: 'easeOut' }}
-        >
-          {tab === 'overview' && <OverviewView goto={goto} />}
-          {tab === 'discovery' && <DiscoveryView />}
-          {tab === 'printers' && <PrintersView />}
-          {tab === 'print' && <PrintView goto={goto} />}
-          {tab === 'queue' && <QueueView />}
-          {tab === 'scan' && <ScanView />}
-          {tab === 'pairing' && <PairingView />}
-          {tab === 'backends' && <BackendsView goto={goto} />}
-          {tab === 'debug' && <DebugView goto={goto} />}
-          {tab === 'events' && <EventsView />}
-        </motion.div>
+        {consoleAuthRequired ? (
+          <ConsoleAuthGate />
+        ) : (
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+          >
+            {tab === 'overview' && <OverviewView goto={goto} />}
+            {tab === 'discovery' && <DiscoveryView />}
+            {tab === 'printers' && <PrintersView />}
+            {tab === 'print' && <PrintView goto={goto} />}
+            {tab === 'queue' && <QueueView />}
+            {tab === 'scan' && <ScanView />}
+            {tab === 'pairing' && <PairingView />}
+            {tab === 'backends' && <BackendsView goto={goto} />}
+            {tab === 'debug' && <DebugView goto={goto} />}
+            {tab === 'events' && <EventsView />}
+          </motion.div>
+        )}
       </main>
 
       <Footer />

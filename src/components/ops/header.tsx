@@ -1,6 +1,6 @@
 'use client'
 
-import { Moon, Printer, Radio, Sun } from 'lucide-react'
+import { Lock, Moon, Printer, Radio, Sun } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useOpsStore } from './store'
 import { OPS_VERSION } from '@/lib/ops/types'
@@ -11,6 +11,7 @@ export function Header() {
   const hostInfo = useOpsStore((s) => s.hostInfo)
   const connected = useOpsStore((s) => s.connected)
   const socketConnected = useOpsStore((s) => s.socketConnected)
+  const consoleAuthEnabled = hostInfo?.consoleAuthEnabled === true
 
   return (
     <header className="border-b">
@@ -27,7 +28,19 @@ export function Header() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {consoleAuthEnabled && (
+            <div
+              className="flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 shadow-xs sm:px-2.5 sm:py-1.5 dark:text-amber-400"
+              role="status"
+              title="管理面已启用访问令牌（REST/WS 需鉴权；设备打印/配对不受影响）"
+              aria-label="控制台鉴权已启用"
+            >
+              <Lock className="size-3.5 shrink-0" aria-hidden />
+              <span className="hidden md:inline">控制台鉴权已启用</span>
+            </div>
+          )}
+
           <div
             className={cn(
               'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-xs',

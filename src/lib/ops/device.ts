@@ -10,6 +10,7 @@ export interface DeviceIdentity {
 
 const DEVICE_KEY = 'ops.device'
 const TOKEN_KEY = 'ops.token'
+const CONSOLE_TOKEN_KEY = 'ops.consoleToken'
 
 function randomId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -52,4 +53,17 @@ export function setPairedToken(token: string | null): void {
   if (typeof window === 'undefined') return
   if (token) window.localStorage.setItem(TOKEN_KEY, token)
   else window.localStorage.removeItem(TOKEN_KEY)
+}
+
+// ---- 控制台访问令牌（P2 安全轮：管理面鉴权，与设备配对令牌相互独立） ----
+
+export function getConsoleToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return window.localStorage.getItem(CONSOLE_TOKEN_KEY)
+}
+
+export function setConsoleToken(token: string | null): void {
+  if (typeof window === 'undefined') return
+  if (token) window.localStorage.setItem(CONSOLE_TOKEN_KEY, token)
+  else window.localStorage.removeItem(CONSOLE_TOKEN_KEY)
 }

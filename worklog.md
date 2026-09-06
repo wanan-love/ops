@@ -425,3 +425,42 @@ Stage Summary:
 - 项目状态：稳定（17/17、lint 0、零溢出、双视图全绿）
 - 已知风险/未验证：真实 eSCL 扫描仪的 PDF 导出效果（大页数/高 dpi 下 embedPng 性能）待硬件验证；opscan tsc 既有噪音（TS2367 窄化守卫等）为历史遗留，非本轮引入，不影响运行
 - 下一阶段优先建议：①eSCL Duplex 双面扫描（vscan Feeder 扩展 4 页正反 + eSCL 双面参数探测）②Host 控制台鉴权（访问口令 + API token，局域网暴露面收窄）③扫描亮度/对比度参数（eSCL setting 支持时透传）④P4 Brother PJL over 9100 试点（首个 Vendor Adapter）⑤Android/iOS 原生化（NsdManager + 扫描 UI + PDF 保存到相册/文件）
+
+---
+Task ID: 9（开工）
+Agent: main-agent
+Task: 开工 QA 基线核查 + 决策本轮重点（Host 控制台鉴权）
+
+Work Log:
+- 开工核查：git fddf276（仅 worklog 同步提交，无代码变更，基线仍为 v0.3.3）；ops-host 单进程 22701 监听 3001/3002/3061/3063/3065 全部正常；securityMode=open
+- 【QA 基线】agent-browser 经 :81：10 tab × [默认/393×1280] 全 0 横向溢出、0 页面错误、0 console error；自测 17/17 通过（tr-mtpttrt0-1045）+ 场景运行自身零残留（现存 9 job 均为数小时前 E2E 历史完成态）；扫描 E2E：开始扫描→completed→导出 PDF（1 页/6.4KB/A4）→网关下载 200/6573B/%PDF-1.7 魔数有效→清理后 scan jobs=0；host.log 无 error
+- 结论：项目稳定无 bug → 按用户指令③推进新需求
+- 决策：本轮实施「Host 控制台鉴权」（连续三轮 worklog 建议优先项②，settings 已预留 securityMode 字段；收窄局域网 REST/WS 管理面暴露，协议端口 3061/3065 保持开放以兼容真实 IPP/eSCL 客户端）
+
+Stage Summary:
+- QA 基线：全绿（17/17、零溢出、零错误、E2E 完好）
+- 本轮进入 P2 安全轮：Host 控制台访问口令 + API Token（REST + WS），协议仿真端口豁免
+
+---
+Task ID: 9（主任务轮）
+Agent: main-agent
+Task: QA 基线核查（全绿）→ P2 安全轮：Host 控制台鉴权全链路（v0.4.0）
+
+Work Log:
+- 【QA 基线】10 tab × [默认/393×1280] 零溢出、0 页面/console error、17/17 场景通过、扫描 E2E + PDF 导出链路完好 → 项目稳定，无 bug 需修复，按指令推进新需求
+- 【决策】实施连续三轮建议优先项「Host 控制台鉴权」：此前管理面 REST/WS 全裸奔（securityMode 只护 POST /api/jobs 一条）
+- 【设计定稿】两轴安全模型：securityMode（设备配对轴，已有）+ consoleAuth（管理面轴，本轮）。收紧永远无门槛（防锁定：令牌同步落盘 data/console-token.txt 0600 权限），放开/重生成需持有效令牌；启用时总是生成全新令牌（禁用期旧值视为已泄露）
+- 【后端 7 文件】①core/types：HostSettings.consoleAuth + HostInfo.consoleAuthEnabled ②core/settings：generateConsoleToken（ops_+48hex 192-bit）+ enable/disable/regenerate + timingSafeEqual 常时比较 + 令牌文件落盘/清理 ③http/router：CONSOLE_AUTH_ERROR_CODE 标记 + extractConsoleToken 三通道（x-ops-console-token 头 / Bearer / ?opsToken=）+ consoleAuthGate ④http/server：路由匹配后统一鉴权门 + 公白白名单（/healthz、system/info、console/auth、console/enable、pairing 发起/轮询、POST /api/jobs 走设备轴）+ CORS 头扩展 ⑤http/routes：POST /api/console/auth|enable|disable|token/regenerate 4 条路由 + security 事件日志 + bus 广播 ⑥ws/realtime：握手令牌校验（auth.payload / query.opsToken）→ auth:error+断开；enable/regenerate 时 disconnectSockets(true) 断存量连接 ⑦host.ts：SettingsStore 令牌签发回调（事件日志 + console-auth bus 事件）
+- 【场景 18 console-auth】11 组断言：开放态 200 → HTTP enable（真实路由）→ 无令牌 401+code 标记 → 伪令牌 401 → 有效 header/query 双通道 200 → system/info 公开+consoleAuthEnabled=true → 登录校验 200/401 → pairing 发起 400≠401（设备轴不受影响）→ 重生成旧令牌失效新令牌可用 → 伪令牌关闭 401/有效关闭 200 → finally 保证恢复开放态；ScenarioApi 新增 httpProbe/setConsoleAuth/consoleToken
+- 【前端 9 文件】types（HostSettings/HostInfo/consoleAuth + OPS_VERSION 0.4.0）；device/hooks（ops.consoleToken localStorage + useSyncExternalStore + setConsoleTokenState 广播——修复 store 直调 device 绕过缓存导致 WS 不重建的 bug）；client（全请求自动附令牌头 + 401 code 标记派发全局事件 + restUrl/scanImageUrl/scanPdfUrl 追加 opsToken 兼容 <img>/下载 + console 4 方法）；store（consoleAuthRequired 门状态 + login/logout/enable/disable/regenerate + refresh 成功清门 + 401 时 systemInfo 兜底拉取 header 徽章数据 + 运行中 testRun REST 补偿合并 + module 级事件监听）；console-auth-gate.tsx 新组件（amber 主题锁定卡：Lock 图标 spring 动画 + password 输入 Eye 切换 + 错误提示 + Enter 提交 + 防丢失提示含 console-token.txt 恢复说明）；ops-app（门渲染替换主内容 + WS auth 握手 + 令牌变化重建 socket + auth:error 仅无令牌时弹门 + io server disconnect 手动重连修复——socket.io 对服务端主动断开不自动重连）；pairing-view（控制台访问控制卡：状态徽章/令牌掩码显示复制/AlertDialog 确认重生成与关闭/新令牌 amber 横幅/curl 示例框只读语义+复制命令按钮/清除本端令牌）；header（amber 锁徽章，移动端图标化）
+- 【顺手修复 2 个存量 bug】①PATCH /api/settings 部分更新把未传字段抹为 undefined（hostName/snmpCommunity 曾从磁盘消失）→ settings.patch 显式字段覆盖 + load() 补默认值 + 路由空值校验 ②socket.io io server disconnect 后 WS 永久断开退化为轮询（enable disconnectSockets 触发）→ 区分「被拒断开/服务端主动断开」+ 手动重连 + auth 热更新
+- 【验收】后端 curl 冒烟（enable→401/200×3 通道→regenerate 旧死→disable→开放→令牌文件创建/清理）；WS 专项脚本（auth off 双连接 welcome / auth on 无令牌+伪令牌 auth:error+server disconnect / 正确令牌+query 通道 welcome）；场景 18 单跑 8ms pass + 全量 18/18 ×2（curl + 浏览器 UI）；agent-browser E2E ×8（UI 启用→徽章+令牌+WS 重连；清令牌 reload→锁屏；伪令牌→错误提示；正确令牌→解锁+WS；扫描图像 opsToken 850px 加载；UI 重生成→新令牌横幅；UI 关闭→开放；运行中 curl 启用→免刷新弹锁→解锁）；10 tab × [1280/393] 零溢出；锁屏 393px 输入框 311×44px 触控达标；VLM 截图评审 2 项建议已吸收（header 移动端紧凑化 gap/padding 响应式 + curl 框只读语义 border-l 左强调线/复制按钮）；lint 0 error；git 提交推送
+- 【文档】USAGE.md：配置章「控制台访问控制」完整说明（两轴模型/三通道/白名单/防锁定/浏览器体验）+ 排查章新增第 9 节鉴权 6 行表格；README：badge v0.4.0 + 18/18 + 特性 bullet + 场景清单 + Roadmap 15 ✔；版本 0.3.3 → 0.4.0（前后端 + host package.json）
+
+Stage Summary:
+- 交付：Host 控制台鉴权全链路（管理面令牌 REST 统一鉴权门 + WS 握手校验 + 防锁定落盘 + 4 条管理路由 + 前端锁屏/解锁/管理卡 + 场景 18）——连续三轮 backlog 的安全优先项落地，管理面暴露面从「局域网完全裸奔」收窄为「令牌持有人可管理」
+- 设计要点：两轴模型（管理面/设备面独立可叠加）；收紧无门槛+放开需证明（启用永远开放但令牌落盘 Host 本机防锁定）；禁用期令牌恒 null（防泄露后复用）；三通道等价传递（header/Bearer/query，<img> 兼容）；公白白名单保留发现/探活/设备轴/打印提交
+- 顺手修复 2 个存量 bug：settings PATCH 字段抹除（hostName 从磁盘消失的根因）、socket.io 服务端主动断开后不自动重连（永久退化轮询）
+- 项目状态：稳定（18/18、lint 0、零溢出、零 console error、8 组 E2E 全绿、WS 恢复逻辑验证）
+- 已知风险/未验证：①令牌为对称共享密钥模型（无用户体系/无吊销列表/无轮换周期，LAN 工具定位够用，企业多管理员场景需升级）②console-token.txt 明文落盘于数据目录（依赖文件系统权限隔离，0600 已设）③CORS allow-origin *（若未来加 cookie/凭据需收紧）④ WS auth:error 仅握手期校验，长连接建立后令牌重生成靠服务端 disconnectSockets 兜底（已实现）⑤真实跨设备场景（非同机浏览器）待真机验证
+- 下一阶段优先建议：①eSCL Duplex 双面扫描（vscan Feeder 正反 4 页 + 双面参数探测）②扫描亮度/对比度 eSCL setting 透传③P4 Brother PJL over 9100 试点（首个 Vendor Adapter）④Android/iOS 原生化（NsdManager + 令牌管理 UI + PDF 存相册）⑤真实硬件验证（含控制台鉴权跨设备真机流）

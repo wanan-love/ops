@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { promises as fs } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import type { HostContext } from '../host'
-import { Router, readBody, sendError, sendJson, withCors } from './router'
+import { Router, consoleAuthGate, readBody, sendError, sendJson, withCors } from './router'
 import { buildRouter } from './routes'
 
 /**
@@ -124,6 +124,23 @@ function serveStatic(ctx: HostContext, res: ServerResponse, pathname: string): P
 export function createRestServer(ctx: HostContext, restPort: number): { server: Server; close(): void } {
   const router: Router = buildRouter()
 
+  /**
+   * 控制台鉴权公白白名单（仅鉴权启用时生效）：
+   *  - /api/system/info        发现/健康探活（含 consoleAuthEnabled 标志，供客户端渲染解锁界面）
+   *  - /api/console/auth       登录校验本身
+   *  - /api/console/enable     收紧操作永远允许（防锁定：令牌落盘 data/console-token.txt 可由 Host 所有者恢复）
+   *  - /api/pairing/*          设备配对轴（设备令牌体系，与控制台轴独立）
+   *  - POST /api/jobs          客户端打印提交（受 securityMode 设备令牌校验，不走控制台轴）
+   */
+  const PUBLIC_PATHS = new Set<string>(['/api/system/info', '/api/pairing/status'])
+  const PUBLIC_POST_PREFIXES = ['/api/console/auth', '/api/console/enable', '/api/pairing/requests']
+
+  function isPublicApiPath(method: string, pathname: string): boolean {
+    if (PUBLIC_PATHS.has(pathname)) return true
+    if (method === 'POST' && (PUBLIC_POST_PREFIXES.some((p) => pathname === p) || pathname === '/api/jobs')) return true
+    return false
+  }
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     withCors(res)
     try {
@@ -153,6 +170,9 @@ export function createRestServer(ctx: HostContext, restPort: number): { server: 
         sendError(res, 404, `未找到路由：${req.method} ${url.pathname}`)
         return
       }
+
+      // 控制台鉴权门（P2 安全轮）：白名单外全部需要有效令牌
+      if (!isPublicApiPath(req.method ?? 'GET', url.pathname) && !consoleAuthGate(ctx, req, res, url.searchParams)) return
 
       // POST/ PATCH/ DELETE 带 body 的统一读取（PDF 原始字节或 JSON）
       const hasBody = req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT'

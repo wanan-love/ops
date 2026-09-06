@@ -1,7 +1,7 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
-import { loadDevice, saveDeviceName, getPairedToken, setPairedToken, type DeviceIdentity } from './device'
+import { loadDevice, saveDeviceName, getPairedToken, setPairedToken, getConsoleToken, setConsoleToken, type DeviceIdentity } from './device'
 
 /**
  * localStorage 派生状态（useSyncExternalStore 实现，SSR 安全且符合 react-hooks 新规则）。
@@ -68,6 +68,32 @@ export function useUpdatePairedToken(): (token: string | null) => void {
     tokenCache = token
     notify()
   }
+}
+
+// ---- 控制台访问令牌（P2 安全轮） ----
+
+let consoleTokenCache: string | null | undefined
+
+export function useConsoleToken(): string | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      if (consoleTokenCache === undefined) consoleTokenCache = getConsoleToken()
+      return consoleTokenCache
+    },
+    () => null,
+  )
+}
+
+/** 写入控制台令牌并广播（store 动作必须走这里而非直接调 device.setConsoleToken，否则 hooks 缓存不更新、WS effect 不重建） */
+export function setConsoleTokenState(token: string | null): void {
+  setConsoleToken(token)
+  consoleTokenCache = token
+  notify()
+}
+
+export function useUpdateConsoleToken(): (token: string | null) => void {
+  return setConsoleTokenState
 }
 
 // ---- 已保存主机 ----

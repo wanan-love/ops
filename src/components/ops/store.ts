@@ -1,7 +1,8 @@
 'use client'
 
 import { create } from 'zustand'
-import { createOpsClient } from '@/lib/ops/client'
+import { createOpsClient, CONSOLE_AUTH_REQUIRED_EVENT } from '@/lib/ops/client'
+import { setConsoleTokenState } from '@/lib/ops/hooks'
 import type {
   DiscoveredHost,
   HostInfo,
@@ -36,6 +37,8 @@ interface OpsState {
   scanJobs: ScanJob[]
   lastRefreshAt: number
   busy: string | null
+  /** 控制台鉴权门：true → 渲染解锁界面（Host 已启用访问令牌且本端未持有效令牌） */
+  consoleAuthRequired: boolean
 
   setRestPort: (port: number) => void
   setSocketConnected: (v: boolean) => void
@@ -57,6 +60,12 @@ interface OpsState {
   exportScanPdf: (id: string) => Promise<ScanJob>
   addScanDevice: (input: { baseUrl: string; name?: string }) => Promise<ScanDevice>
   removeScanDevice: (id: string) => Promise<void>
+  // 控制台鉴权（P2 安全轮）
+  consoleLogin: (token: string) => Promise<boolean>
+  consoleLogout: () => void
+  consoleEnableAuth: () => Promise<string>
+  consoleDisableAuth: () => Promise<void>
+  consoleRegenerate: () => Promise<string>
 }
 
 export function useOpsClient() {
@@ -81,6 +90,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   scanJobs: [],
   lastRefreshAt: 0,
   busy: null,
+  consoleAuthRequired: false,
 
   setRestPort: (port) => set({ restPort: port, hostInfo: null, printers: [], jobs: [], events: [], scanDevices: [], scanJobs: [], connected: false }),
   setSocketConnected: (v) => set({ socketConnected: v }),
@@ -118,7 +128,7 @@ export const useOpsStore = create<OpsState>((set, get) => ({
   },
 
   refresh: async () => {
-    const { restPort } = get()
+    const { restPort, testRun } = get()
     const client = createOpsClient(restPort)
     try {
       const [info, printersRes, jobsRes, eventsRes, pairing, settingsRes, hostsRes, scanDevicesRes, scanJobsRes] = await Promise.all([
@@ -132,9 +142,20 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         client.scanDevices().catch(() => ({ devices: [] as ScanDevice[] })),
         client.scanJobs().catch(() => ({ jobs: [] as ScanJob[] })),
       ])
+      // WS 掉线期间的自测进度补偿：运行中 → 从 REST 拉取最新 run 状态（避免 UI 冻结在旧进度）
+      let mergedRun = testRun
+      if (testRun?.status === 'running') {
+        try {
+          const runs = await client.testRuns()
+          mergedRun = runs.runs.find((r) => r.runId === testRun.runId) ?? testRun
+        } catch {
+          /* 保留现有状态 */
+        }
+      }
       set({
         hostInfo: info,
         connected: true,
+        consoleAuthRequired: false,
         printers: printersRes.printers,
         jobs: jobsRes.jobs,
         events: eventsRes.events,
@@ -143,10 +164,18 @@ export const useOpsStore = create<OpsState>((set, get) => ({
         hosts: hostsRes.hosts,
         scanDevices: scanDevicesRes.devices,
         scanJobs: scanJobsRes.jobs,
+        testRun: mergedRun,
         lastRefreshAt: Date.now(),
       })
     } catch {
       set({ connected: false })
+      // 控制台鉴权锁定态：system/info 是公网白名单，仍可拉取 → header 可显示主机名 + 锁徽章
+      try {
+        const info = await client.systemInfo()
+        set({ hostInfo: info })
+      } catch {
+        /* Host 完全不可达 */
+      }
     }
   },
 
@@ -223,4 +252,65 @@ export const useOpsStore = create<OpsState>((set, get) => ({
     await client.removeScanDevice(id)
     set({ scanDevices: get().scanDevices.filter((d) => d.id !== id) })
   },
+
+  // ---------------------------------------------------------------- 控制台鉴权（P2 安全轮）
+
+  consoleLogin: async (token) => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    try {
+      await client.consoleAuth(token)
+    } catch {
+      return false
+    }
+    setConsoleTokenState(token)
+    set({ consoleAuthRequired: false, connected: true })
+    await get().refresh()
+    return true
+  },
+
+  consoleLogout: () => {
+    setConsoleTokenState(null)
+    const stillEnabled = get().hostInfo?.consoleAuthEnabled === true
+    set({
+      connected: !stillEnabled,
+      consoleAuthRequired: stillEnabled,
+      ...(stillEnabled ? { hostInfo: null, printers: [], jobs: [], events: [], scanDevices: [], scanJobs: [], pairingRequests: [], devices: [], hosts: [], settings: null } : {}),
+    })
+  },
+
+  consoleEnableAuth: async () => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const res = await client.consoleEnable()
+    setConsoleTokenState(res.token)
+    await get().refresh()
+    return res.token
+  },
+
+  consoleDisableAuth: async () => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    await client.consoleDisable()
+    // 清除本端令牌（已失效；再次启用时总是全新值）
+    setConsoleTokenState(null)
+    await get().refresh()
+  },
+
+  consoleRegenerate: async () => {
+    const { restPort } = get()
+    const client = createOpsClient(restPort)
+    const res = await client.consoleRegenerateToken()
+    setConsoleTokenState(res.token)
+    await get().refresh()
+    return res.token
+  },
 }))
+
+// 控制台鉴权 401 / WS auth:error → 全局解锁门（client.ts 与 ops-app 的 socket 监听均派发此事件）
+if (typeof window !== 'undefined') {
+  window.addEventListener(CONSOLE_AUTH_REQUIRED_EVENT, () => {
+    const s = useOpsStore.getState()
+    if (!s.consoleAuthRequired) useOpsStore.setState({ consoleAuthRequired: true, connected: false })
+  })
+}
