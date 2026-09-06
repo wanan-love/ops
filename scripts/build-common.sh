@@ -2,14 +2,14 @@
 # build-common.sh — OpenPrintShare 打包公共函数（被 build-{web,host,linux,windows,macos,android,ios,all} source）
 set -euo pipefail
 
-# 版本号：mini-services/ops-host/src/core/types.ts 为单一来源
+# 版本号：mini-services/ops-host/src/core/types.ts 为单一来源（POSIX sed，兼容 BSD/GNU）
 OPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_ROOT="$OPS_ROOT/mini-services/ops-host"
 DIST="$OPS_ROOT/dist"
 STAGE="$DIST/.stage"
 
 version() {
-  grep -oP "OPS_VERSION = '\K[^']+" "$HOST_ROOT/src/core/types.ts" | head -1
+  sed -n "s/^OPS_VERSION = '\([^']*\)'/\1/p" "$HOST_ROOT/src/core/types.ts" | head -1
 }
 
 PRODUCT="OpenPrintShare"

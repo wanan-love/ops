@@ -51,7 +51,19 @@ Run OpenPrintShare.exe, then open http://localhost:3001/
 Docs: https://github.com/wanan-love/ops
 EOF
 
-(cd "$ZIPROOT" && zip -q -9 -r "$WIN_DIR/$ZIP_NAME" .)
+(cd "$ZIPROOT" && {
+  if command -v zip >/dev/null 2>&1; then
+    zip -q -9 -r "$WIN_DIR/$ZIP_NAME" .
+  elif command -v tar >/dev/null 2>&1; then
+    # Windows 10+ / macOS / Linux 自带 bsdtar：-a 依扩展名选择 zip 格式
+    tar -a -cf "$WIN_DIR/$ZIP_NAME" .
+  elif command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+    PSH="$(command -v pwsh || command -v powershell)"
+    "$PSH" -NoProfile -Command "Compress-Archive -Path '$(pwd)/*' -DestinationPath '$WIN_DIR/$ZIP_NAME' -Force"
+  else
+    echo "无可用打包工具（zip/tar/pwsh）" >&2; exit 127
+  fi
+})
 log "  → $WIN_DIR/$ZIP_NAME ($(du -h "$WIN_DIR/$ZIP_NAME" | cut -f1))"
 
 log "build-windows 完成：$(ls -1 "$WIN_DIR" | tr '\n' ' ')"
