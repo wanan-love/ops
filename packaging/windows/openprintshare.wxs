@@ -11,7 +11,6 @@
     UpgradeCode="7B9E45C0-5A62-4C4E-9C63-1E5F2A9D3B01"
     Scope="perMachine"
     InstallerVersion="500">
-    <SummaryDescription>OpenPrintShare — 跨平台局域网共享打印机（Host）。运行时已随程序打包，无需安装 Node/Python/Rust。</SummaryDescription>
 
     <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 OpenPrintShare，无法降级安装。" />
 
@@ -59,13 +58,16 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- 防火墙规则：局域网发现与客户端连接（netsh，忽略失败不阻断安装） -->
     <CustomAction Id="FirewallRuleAdd"
-      ExeCommand='netsh advfirewall firewall add rule name="OpenPrintShare Host" dir=in action=allow program="[INSTALLDIR]OpenPrintShare.exe" enable=yes profile=any'
+      Directory="INSTALLDIR"
+      ExeCommand="[SystemFolder]netsh.exe advfirewall firewall add rule name=&quot;OpenPrintShare Host&quot; dir=in action=allow program=&quot;[INSTALLDIR]OpenPrintShare.exe&quot; enable=yes profile=any"
       Return="ignore"
       Impersonate="no"
       Execute="deferred" />
     <CustomAction Id="FirewallRuleRemove"
-      ExeCommand='netsh advfirewall firewall delete rule name="OpenPrintShare Host"'
+      Directory="INSTALLDIR"
+      ExeCommand="[SystemFolder]netsh.exe advfirewall firewall delete rule name=&quot;OpenPrintShare Host&quot;"
       Return="ignore"
       Impersonate="no"
       Execute="deferred" />
