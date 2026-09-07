@@ -624,3 +624,26 @@ Stage Summary:
 - 运维备忘：Brother 下载需 EULA howto 页泄链（download.brother.com/welcome/{dlid}/）；HPLIP SourceForge 403 走 deb.debian.org；Canon gdlp01.c-wss.com 直链 curl 友好；Lexmark .sh.zip 用 nixstaller --noexec + xz --format=lzma
 - 已知风险/未验证：①所有私有通道响应格式（HP LEDM/CDM、Canon ivec XML、Brother SUPPLY、Epson libescpr）均需真机——无真机不开发不宣称；②Kyocera 官方驱动未获取（JS 下载中心）；③下一阶段建议（VENDOR_RESEARCH §5 新序）：HP LEDM/CDM HTTP 适配器（源码证据级最高）→ HP 私有 MIB → Lexmark MIB → Brother PJL SUPPLY 真机 → Epson libescpr（仅新代）→ Canon ivec XML
 - cron「任务审查与持续迭代」任务 364017 持续有效（P5 建立）
+
+---
+Task ID: P9（任务审查与持续迭代轮）
+Agent: main-agent
+Task: 用户指令「继续任务审查和迭代，重建定时任务 审查迭代后推送git」→ 重建 cron + QA 基线 + P9 HP LEDM/CDM Vendor Adapter 开发 + v0.4.7 发布
+
+Work Log:
+- 【cron 重建】发现旧任务 364844（exec limits 被禁用）→ 删除 → 新建 **365877「OPS 任务审查与持续迭代」**（fixed_rate 900s / Asia/Shanghai / webDevReview / priority 10）：message 更新至 P8 后基线（v0.4.6 已推送、VENDOR_RESEARCH §5 新序含 P9 HP LEDM/CDM 第一位、真实性红线、运维要点、验收-推送闭环）；本次创建未再被禁用（配额已恢复）
+- 【基线审查】lint 0 错；全量自测 21/21（tr-mtr4g9r5-271）；agent-browser :81 首页 v0.4.6 零溢出零 error；git 状态审查发现两 UUID 提交（e5803f2/bf16fdc——被禁用 cron 轮的 worklog 自动追加，仅 worklog.md 无代码改动）+ 16 证据文件 mode 644→755（本轮归一）
+- 【P9 研究】从 P8 归档 HPLIP 源码完整提取协议要素：LEDM 端点三路径（status.py:1756/1894/1970）+ CDM 端点（device.py:1705）+ **LEDM 端口 8080（hpmud/jd.c:507-510 HPMUD_EWS_LEDM_CHANNEL——本轮新证据点）** + StatusCategory 官方枚举（ready/processing/trayEmptyOrOpen/jamInPrinter/closeDoorOrCover/hardError/inPowerSave…）+ ConsumableInfo 节点树（ConsumableTypeEnum/ConsumableState/ConsumableLabelCode/ConsumablePercentageLevelRemaining/ProductNumber）+ MediaHandling（InputTray/InputBin/Accessories autoDuplexor）+ CDM JSON suppliesList 字段 + 官方映射表（element_type10_xlate/pen_type10_xlate 颜色码 pK/CMY/M/C/Y/K/G/mK）+ 命名空间剥除做法（psdyn:/ccdyn:/mhdyn:/dd:/locid:/pscat:/ad: replace）
+- 【P9 开发】①backends/hp-ledm.ts：四文档并行只读 HTTP GET（node:http，256KB 上限/1200ms 超时）→ 解析器纯函数（XML 命名空间剥除 + 宽容正则；JSON suppliesList）→ HpProbeResult（LEDM 优先 CDM 兜底；printhead/imageDrum 跳过同 HPLIP；missing→level null）；②vledm/server.ts：Virtual HP LEDM/CDM :3068（XML/JSON 应答对齐 HPLIP schema；namespaced/bare/404 三风格；8 condition 注入；持久化）；③host.ts/runtime：devMode 门控 OPS_VLEDM_ENABLED+ctx.vledm+hostInfo.vledmPort；④settings：hpLedmProbeEnabled/hpLedmPort(8080)/hpCdmPort(80) 三字段（PATCH 校验 1-65535）；⑤routes.ts：hpPromise（默认关）+ 状态融合链 IPP→SNMP→PJL→HP（pjlStatusApplied 新标记逐层守卫）+ /api/vledm 三路由；⑥前端：配对页 HP 设置卡（开关/双端口/HPLIP 证据说明）+ 后端页 Virtual HP 卡（StatusCategory 注入/风格切换/请求计数）+ client/types
+- 【踩坑修复】①块注释内「fax*/scan*/」的 */ 提前终止注释 → ReferenceError: scan is not defined（改文字表述 fax 系/scan 系）；②场景 22 初版断言「toner-low 后状态应回 online」错——实际保守守卫（错误状态不被 ready 覆盖，同 IPP/SNMP 口径）是正确设计 → 改断言为验证正确行为（双验证：耗材域独立 + 状态保守守卫）
+- 【自测】场景 22 hp-ledm-vendor-probe（36 步骤：直连探测→命名空间剥除验证→真实路由启停→四色墨 62/45/50/58 VENDOR_API 融合→纸盒 Tray1/Tray2/PhotoTray→双面 both→paper-out 状态融合→toner-low 耗材联动→404→UNKNOWN 兜底→settings 还原）；全量 **22/22**（tr-mtr522r0-7618）零残留
+- 【QA】agent-browser :81：首页 v0.4.7；后端页 Virtual HP 卡渲染+条件注入 toast（StatusCategory=trayEmptyOrOpen）+风格切换；配对页 HP 设置卡（8080/80 控件+开关 toast）；端到端（启用→导入 vipp-basic→刷新→API 报告四色墨 VENDOR_API/纸盒/双面/probes ok → UI 能力 Chip 全展示 C2P04AE 黑色 62% 等）；清理恢复种子 2 台；393/1280 双视口零溢出；零 console error；dev.log/host.log 无错误
+- 【发布】v0.4.6→0.4.7（host package + core/types + 前端 OPS_VERSION + README badge 22/22）；USAGE/VENDOR_PROTOCOLS/VENDOR_RESEARCH 文档同步；push main **1efd0b2**（含 bf16fdc worklog 提交与 16 文件 mode 归一，+new 3 文件）
+
+Stage Summary:
+- 交付：①cron 任务 365877 重建（未禁用，恢复自动迭代）；②P9 HP LEDM/CDM Vendor Adapter 完整落地（第二个 Vendor Adapter，首个源码实证级：LEDM :8080 XML 三文档 + CDM :80 JSON 双通道只读探测）——新增耗材（逐色墨盒+SKU）/纸盒/双面器/状态四类 VENDOR_API 回读、Virtual LEDM :3068 仿真（namespaced/bare/404 宽容解析验证）、场景 22 全链路自测（含 404→UNKNOWN 红线回归）；v0.4.7 发布推送
+- 设计要点：①通道优先级链 IPP→SNMP→PJL→HP 逐层「未被上层应用才生效」守卫（pjlStatusApplied 标记传递）；②LEDM 优先 CDM 兜底（字段更丰富）；③状态融合保守守卫正面验证（ready 不覆盖已有错误状态——同 IPP/SNMP 口径，防状态抖动）；④「autoDuplexor 有→双面 both 宽松声明」遵循合法形态「supported+值宽松」（LEDM 文档无翻转模式信息）
+- 项目状态：稳定（lint 0、22/22、双视口零溢出、零 console error、零残留、CI 预期绿、已推送 1efd0b2）
+- 运维备忘：块注释内严禁 */ 出现在词中间（fax*/scan*/ 会提前终止注释）；agent-browser eval 每次调用独立作用域（变量重声明会 SyntaxError，用 IIFE）；toast 验证用 body.innerText includes 而非 sonner 选择器
+- 已知风险/未验证：①HP LEDM/CDM 真实机型响应细节（机型覆盖面、代际差异、字段缺失组合）需真机——XML/JSON 解析已宽容但格式变体无法穷举（无真机不宣称）；②LEDM 端口 8080 在部分 HP 机型可能为 80（EWS 同源）——设置双端口可调已兜底；③下一阶段建议（VENDOR_RESEARCH §5 更新后）：HP 私有 MIB 适配器（PML OID 树）→ Lexmark MIB → Brother PJL SUPPLY 真机 → Epson libescpr（仅新代）→ Canon ivec XML；④真实硬件验证轮（Windows/CUPS/HP 真机）仍是最大缺口
+- cron「任务审查与持续迭代」任务 **365877** 持续有效（本轮重建）
