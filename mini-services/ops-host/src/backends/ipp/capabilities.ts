@@ -1,6 +1,6 @@
 import type { CapabilityReport, CapabilitySource, ConsumableInfo, PrinterStatus } from '../../core/types'
 import { failProbe, okProbe, supportedCap, unknownCap, emptyReport } from '../merge'
-import { findAttr, attrInt, attrBool, attrStr, attrStrs, attrInts, attrRange, attrResolution } from './protocol'
+import { findAttr, attrInt, attrBool, attrStr, attrStrs, attrInts, attrRange, attrResolutions } from './protocol'
 import type { IppMessage } from './protocol'
 
 /**
@@ -75,10 +75,15 @@ export function reportFromPrinterAttributes(msg: IppMessage, source: CapabilityS
       : supportedCap(mediaValues, source, `IPP media-supported=[${mediaValues.join(',')}]`)
 
   const resolution = findAttr(msg, 'printer-resolution-supported')
+  // 属性存在但值全部无法解析 → UNKNOWN（不猜测 dpi；1setOf 集合取所有值中的最大 dpi）
+  const resolutions = resolution === undefined ? null : attrResolutions(resolution)
+  const maxDpi = resolutions === null ? null : resolutions.reduce((m, r) => Math.max(m, r.x, r.y), 0)
   const dpiCap: CapabilityReport['maxResolutionDpi'] =
     resolution === undefined
       ? unknownCap(source, 'printer-resolution-supported 属性不存在')
-      : supportedCap(attrResolution(resolution)?.x ?? 600, source, 'IPP printer-resolution-supported')
+      : maxDpi !== null && maxDpi > 0
+        ? supportedCap(maxDpi, source, `IPP printer-resolution-supported=[${resolutions!.map((r) => `${r.x}x${r.y}`).join(',')}]`)
+        : unknownCap(source, 'printer-resolution-supported 存在但值无法解析（不猜测）')
 
   const ppm = findAttr(msg, 'printer-pages-per-minute')
   const ppmValue = ppm === undefined ? null : attrInt(ppm)

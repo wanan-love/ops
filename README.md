@@ -2,7 +2,7 @@
 
 > 跨平台局域网共享打印机 — 设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 设备自动发现并打印。
 
-[![Release](https://img.shields.io/badge/release-v0.4.3--cross--platform-emerald)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.4--cross--platform-emerald)](../../releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
 [![Backend](https://img.shields.io/badge/print%20backends-IPP%20%7C%20CUPS%20%7C%20Windows-teal)](#打印后端)
 [![Self-Test](https://img.shields.io/badge/self--test-21%2F21%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
@@ -22,6 +22,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 - **控制台鉴权（v0.4.0）**：管理面访问令牌（REST + WebSocket 握手校验；三通道传递 header/Bearer/`?opsToken=`）；与设备配对轴独立的两轴安全模型；令牌落盘防锁定；协议仿真端口豁免兼容真实客户端
 - **PJL over RAW 9100（v0.4.2，首个 Vendor Adapter 试点）**：双向状态/耗材回读（UEL 包裹的 `@PJL INFO STATUS/SUPPLY` 查询 · CODE 子集映射不猜测 · Virtual PJL Printer :3067 仿真 · 默认关闭需显式启用）；通道优先级 IPP → SNMP → PJL 兜底，面向 Brother/HP 等 SNMP 缺失的消费级机型
 - **Windows DeviceCapabilities 驱动级能力（P5 · v0.4.3）**：`DC_PAPERNAMES/DC_DUPLEX/DC_COPIES/DC_BINNAMES/DC_COLORDEVICE` 五项驱动真实能力（Add-Type P/Invoke 单次查询 · 只提升 UNKNOWN 不降级 WMI · 新增纸盒 paperTrays 能力轴 · 45s 枚举缓存）；PDF 提交改临时文件传递（修复 ~22KB 命令行长度上限）；场景 21 platform-runtime 平台运行时守卫
+- **能力真实性强化（P6 · v0.4.4）**：IPP 分辨率解析去除 600dpi 猜测兜底（属性存在但解析失败 → UNKNOWN 不猜测；1setOf 集合取最大 dpi）；前端能力 Chip 对 UNKNOWN 轴改显「未确认」虚线样式（提交钳制默认值不再被误读为能力声明）；Epson 官方驱动逆向证据归档（ESC/P-R 1.7.9：libescpr 墨量/状态 API 符号实证 + 9100/SNMP 通道反汇编实证 + 48 型号 PPD 逐型号能力声明，`docs/vendor-evidence/`），厂商研究文档同步修正
 - **客户端尽量无需安装厂商驱动**，实际打印使用 Host（设备 A）上已安装的系统打印机与驱动
 - 切换真实打印机时，仅替换 Printer Backend，**Core / 协议 / 队列 / UI 零改动**
 
@@ -284,6 +285,7 @@ docker compose up -d        # web :3000 + host :3001/:3002 + caddy 网关 :80
 - [x] 15. Host 控制台鉴权（P2 安全轮 · v0.4.0：管理面令牌 REST/WS 全覆盖 + 解锁界面 + 防锁定落盘 + 令牌重生成/旧值立即失效 + 场景 18 自动化验证；与设备配对轴独立的两轴模型）
 - [x] 16. PJL over RAW 9100 双向探测（P4 · v0.4.2 首个 Vendor Adapter 试点：自研 PJL 客户端 UEL/@PJL INFO 回读 + Virtual PJL Printer :3067 + 设置页开关/端口 + VENDOR_API 融合 + 场景 20；通道优先级 IPP→SNMP→PJL，默认关闭安全默认）
 - [x] 17. Windows DeviceCapabilities 驱动级能力（P5 · v0.4.3：Add-Type P/Invoke 五项驱动能力 + paperTrays 纸盒能力轴 + WMI→DC 只提升不降级双层融合 + PDF 临时文件提交修复 + 平台运行时检测优先级修订（文件系统特征优先于 process.platform，防交叉编译误判）+ 场景 21 platform-runtime；真机验收待 Windows 硬件）
+- [x] 18. 能力真实性强化（P6 · v0.4.4：IPP 分辨率解析去除猜测兜底 + UNKNOWN Chip「未确认」展示 + Epson 官方驱动逆向证据归档与厂商文档修正）
 - [ ] 13. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS 真机证书校验 / eSCL 真实扫描仪 / PJL 真机 SUPPLY 格式抓包适配）
 - [ ] 14. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐；P4 PJL ✔ v0.4.2 首个试点落地）
 

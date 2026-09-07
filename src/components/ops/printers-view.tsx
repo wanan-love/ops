@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
 import { BackendBadge, CapabilityStateBadge, ConsumablePanel, InkBars, PrinterStatusBadge, EmptyState, formatTime } from './widgets'
-import type { Capability, Printer } from '@/lib/ops/types'
+import type { Capability, CapabilityReport, Printer } from '@/lib/ops/types'
 
 export function PrintersView() {
   const printers = useOpsStore((s) => s.printers)
@@ -101,6 +101,21 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
   const duplexLabel = printer.capabilities.duplex === 'none' ? '单面' : printer.capabilities.duplex === 'both' ? '双面（长/短边）' : printer.capabilities.duplex === 'long-edge' ? '双面·长边' : '双面·短边'
   const isRealBackend = printer.backend !== 'mock'
   const report = printer.capabilityReport
+  /**
+   * 红线：unknown 时 printer.capabilities 里的值只是「提交钳制默认值」（merge.resolveEffectiveCaps），
+   * 不是能力声明 → Chip 一律改显示「未确认」，避免把默认值误读为官方能力（读取不到 ≠ 不支持）。
+   */
+  const capUnknown = (axis: keyof Omit<CapabilityReport, 'probes'>): boolean => {
+    if (!isRealBackend || !report) return false
+    const cap = report[axis] as Capability<unknown> | undefined
+    return !!cap && cap.state === 'unknown'
+  }
+  const unknownColor = capUnknown('color')
+  const unknownDuplex = capUnknown('duplex')
+  const unknownSizes = capUnknown('paperSizes')
+  const unknownPpm = capUnknown('ppm')
+  const unknownDpi = capUnknown('maxResolutionDpi')
+  const UNKNOWN_TITLE = '该能力探测结果为 UNKNOWN（读取不到 ≠ 不支持）——真实能力未确认，提交时使用保守默认值由驱动最终裁决'
 
   /** 耗材展示策略：Mock → 模拟墨量（SYSTEM 来源，定义即真实）；真实后端 → 仅当 capabilityReport.consumables 为 supported 才显示，UNKNOWN 时隐藏模块 */
   const consumablesSupported = report?.consumables.state === 'supported' && Array.isArray(report.consumables.value) && report.consumables.value.length > 0
@@ -173,11 +188,21 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
         )}
 
         <div className="flex flex-wrap gap-1.5 rounded-lg text-[11px]">
-          <Chip icon={<Palette className="size-3" aria-hidden />}>{printer.capabilities.color ? '彩色' : '黑白'}</Chip>
-          <Chip icon={<Layers3 className="size-3" aria-hidden />}>{duplexLabel}</Chip>
-          <Chip icon={<CircuitBoard className="size-3" aria-hidden />}>{printer.capabilities.paperSizes.join(' / ')}</Chip>
-          <Chip icon={<Gauge className="size-3" aria-hidden />}>{printer.speedOverridePpm ?? printer.capabilities.ppm} ppm</Chip>
-          <Chip icon={<PrinterCheck className="size-3" aria-hidden />}>{printer.capabilities.maxResolutionDpi} dpi</Chip>
+          <Chip icon={<Palette className="size-3" aria-hidden />} title={unknownColor ? UNKNOWN_TITLE : undefined} muted={unknownColor}>
+            {unknownColor ? '彩色：未确认' : printer.capabilities.color ? '彩色' : '黑白'}
+          </Chip>
+          <Chip icon={<Layers3 className="size-3" aria-hidden />} title={unknownDuplex ? UNKNOWN_TITLE : undefined} muted={unknownDuplex}>
+            {unknownDuplex ? '双面：未确认' : duplexLabel}
+          </Chip>
+          <Chip icon={<CircuitBoard className="size-3" aria-hidden />} title={unknownSizes ? UNKNOWN_TITLE : undefined} muted={unknownSizes}>
+            {unknownSizes ? '纸张：未确认' : printer.capabilities.paperSizes.join(' / ')}
+          </Chip>
+          <Chip icon={<Gauge className="size-3" aria-hidden />} title={unknownPpm ? UNKNOWN_TITLE : undefined} muted={unknownPpm}>
+            {unknownPpm ? '速度：未确认' : `${printer.speedOverridePpm ?? printer.capabilities.ppm} ppm`}
+          </Chip>
+          <Chip icon={<PrinterCheck className="size-3" aria-hidden />} title={unknownDpi ? UNKNOWN_TITLE : undefined} muted={unknownDpi}>
+            {unknownDpi ? '分辨率：未确认' : `${printer.capabilities.maxResolutionDpi} dpi`}
+          </Chip>
         </div>
 
         {/* 能力报告（三态 + 来源 + 时间戳，真实后端打印机） */}
@@ -298,9 +323,12 @@ function PrinterCard({ printer, onToggleShare, onTestPrint }: { printer: Printer
   )
 }
 
-function Chip({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+function Chip({ icon, children, title, muted }: { icon: React.ReactNode; children: React.ReactNode; title?: string; muted?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-muted-foreground">
+    <span
+      className={cn('inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-muted-foreground', muted && 'border-dashed text-muted-foreground/60')}
+      title={title}
+    >
       {icon}
       {children}
     </span>

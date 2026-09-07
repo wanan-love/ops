@@ -497,6 +497,17 @@ export function attrResolution(a: IppAttribute | undefined): { x: number; y: num
   return { x: readInt32(v.data, 0), y: readInt32(v.data, 4), unit: v.data[8] ?? 3 }
 }
 
+/**
+ * 解析 1setOf resolution 属性的**全部**值（printer-resolution-supported 是集合属性）。
+ * 长度不为 9 的值跳过（解析失败不猜测，由调用方决定三态）。
+ */
+export function attrResolutions(a: IppAttribute | undefined): { x: number; y: number; unit: number }[] {
+  if (!a) return []
+  return a.values
+    .filter((v) => v.data.length === 9)
+    .map((v) => ({ x: readInt32(v.data, 0), y: readInt32(v.data, 4), unit: v.data[8] ?? 3 }))
+}
+
 function readInt32(data: Uint8Array, offset: number): number {
   const b = data.subarray(offset, offset + 4)
   // 有符号 big-endian（IPP integer 为补码）
