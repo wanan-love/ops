@@ -576,3 +576,28 @@ Stage Summary:
 - 运维备忘：ops-host 必须以 `bun run dev` 启动（package.json dev 脚本含 OPS_DEV_MODE=1）；后台启动用 `(setsid bun run dev >> host.log 2>&1 < /dev/null &)` 才能跨命令存活
 - 已知风险/未验证：①libescpr 私有 ABI 需真机抓包（无真机不宣称）②DeviceCapabilities 真机行为仍待 Windows 硬件 ③下一阶段建议（VENDOR_RESEARCH §5 顺序）：HP-LASERJET-COMMON-MIB 适配器 → Lexmark MIB → Epson libescpr 真机 → Brother PJL SUPPLY 真机
 - cron「任务审查与持续迭代」任务 364017 持续有效（上一轮建立）
+
+---
+Task ID: P7
+Agent: main-agent
+Task: 用户指定第二个 Epson 官方驱动页（低端机型）→ 逆向官方真实能力 → 修正/适配项目 → 发布 v0.4.5
+
+Work Log:
+- 【驱动获取】epson.com.cn 新驱动页（用户给的第二个 URL）解析：适用型号 L220/L313/L363/L365/L455/L310/L130/L360（低端墨仓式），UOS 20 SP1 / 1.6MB / 2020-09-17 发布；页面下载锚点 downloadDriveNew 404 → 沿用 P6 验证过的 /api/Service/downloadFile?driveId&productId 端点成功下载 epson-inkjet-printer-201401w_1.0.0_amd64.deb（1,684,020 字节）
+- 【解包】dpkg-deb -R：12 个型号 PPD（L130/L132/L220/L222/L310/L312/L360/L362/L365/L366/L455/L456，页面未列的 6 个型号 PPD 实际覆盖）+ CUPS 过滤器 + libEpson_201401w.so.1.0.0（796 导出符号）+ 签名资源 .data
+- 【PPD 全量交叉审计】12/12 型号能力完全一致：无 Duplex、无 InputSlot、有 Borderless、16 纸型（比新代 L4350 的 12 多照片尺寸但无自定义纸张）、4 介质（分辨率绑介质 PLAIN 360/EMATTE·EPREMGLOSS 720/ENVELOPE 360）、Brightness/Contrast/Saturation ±25、cupsManualCopies=True、Throughput=1 占位
+- 【库逆向代际断崖】nm -D 全符号：无任何 epsGetSupplyInfo/epsGetInkInfo/epsGetStatus/epsMakeMainteCmd/epsFindPrinter（新代 libescpr 全有）——796 符号全是打印管线（EPC_* ESC/P 指令构造/JFK_* 半色调/颜色转换）；导入符号零 socket/connect（仅 fopen/open）——库无网络栈；早期 objdump 0x238C 疑似命中经核验为函数地址/分支偏移假阳性；过滤器内嵌公钥证书+SHA 校验签名资源（本代新增安全机制）
+- 【对照审查】项目代码层零冲突复核：ipp/capabilities.ts 三态语义覆盖老代真实行为（sides-supported/marker-levels 缺失→UNKNOWN）；12 型无 InputSlot → paperTrays UNKNOWN 语义不变；结论「无需代码改动」（P6 已修掉分辨率猜测兜底），本轮适配全部落在文档与证据层
+- 【适配修正】①VENDOR_PROTOCOLS.md Epson 行：代际拆分证据（老代零状态 API 零网络栈 vs 新代 libescpr 9100+SNMP）②VENDOR_RESEARCH.md：摘要表 Epson 口径代际拆分、Epson 行双代逆向证据、§5 适配器候选收窄为「仅新代机型」、证据区新增 P7 条目 ③EPSON_201401W_ANALYSIS.md 逆向报告（含代际对比总表）
+- 【证据归档】docs/vendor-evidence/：原 deb（md5 0a425bee…）+ L360 PPD（md5 8086b22d…）+ 完整分析报告
+- 【发布】v0.4.4→0.4.5（host package + core/types + 前端 OPS_VERSION + README badge/roadmap #19 新增 P7 条目）；lint 0 错误；host 重启（(setsid bun run dev &)）→ 21/21 全量自测通过（tr-mtqobnex-6615，解析字段 status:'pass' 非 ok）→ 种子态完好 3 台（vp-receipt 未共享被 client scope 过滤属设计）零残留
+- 【agent-browser :81 QA】概览 v0.4.5 显示；打印机页 3 种子齐全 + 能力 Chip 正常（双面（长/短边）等）；393/1280 双视口零溢出；footer 自然下推无重叠；零 console error
+- 【推送】git push main 14d3c57（13 文件 +6242/-8，含 P6 遗留 mode 0755 差异一并归一）
+
+Stage Summary:
+- 交付：第二个 Epson 官方驱动（低端 L 系列 12 型）完整逆向证据链归档入库；代际断崖实证（老代库零网络/零状态 API）→ libescpr Vendor Adapter 作用域收窄至新代；老代耗材 UNKNOWN 终态口径确立；v0.4.5 发布推送
+- 核心结论：「能力逐型号声明」获双数据点正交验证——P6（同代跨型号差异：L4350 有双面 vs M2120/L3150 无）+ P7（跨代际断崖：同 L 系列低端代 12 型全无双面/全无状态通道）——按品牌或系列推断能力必错，项目三态架构二次被官方证据正面验证；老代 L 系列耗材读不到不是缺陷而是官方能力边界
+- 项目状态：稳定（21/21、lint 0、双视口零溢出、零 console error、零残留、CI 预期绿）
+- 运维备忘：ops-host 必须 (setsid bun run dev >> host.log 2>&1 < /dev/null &) 启动；epson.com.cn 下载端点用 /api/Service/downloadFile?driveId&productId（downloadDriveNew 会 404）；自测结果 JSON 字段是 status:'pass' 而非 ok
+- 已知风险/未验证：①libescpr 私有 ABI 需真机抓包（作用域已限定新代）②DeviceCapabilities 真机行为仍待 Windows 硬件 ③下一阶段建议（VENDOR_RESEARCH §5 顺序不变）：HP-LASERJET-COMMON-MIB 适配器 → Lexmark MIB → Epson libescpr 真机（仅新代）→ Brother PJL SUPPLY 真机
+- cron「任务审查与持续迭代」任务 364017 持续有效（上一轮建立）
