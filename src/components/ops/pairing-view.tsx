@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { BadgeCheck, Cable, Copy, Eye, EyeOff, Fingerprint, KeyRound, Link2, Link2Off, Loader2, Lock, LockOpen, MonitorSmartphone, Radio, RefreshCcw, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
+import { BadgeCheck, Cable, Copy, Eye, EyeOff, Fingerprint, Globe, KeyRound, Link2, Link2Off, Loader2, Lock, LockOpen, MonitorSmartphone, Radio, RefreshCcw, ShieldCheck, ShieldOff, Smartphone, Tablet } from 'lucide-react'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -256,6 +256,74 @@ export function PairingView() {
     }
   }
 
+  // HP LEDM/CDM 双向探测（P9 Vendor Adapter；HPLIP 源码实证通道，默认关闭需显式启用）
+  const [hpLedmPortDraft, setHpLedmPortDraft] = useState('')
+  const [hpLedmPortDirty, setHpLedmPortDirty] = useState(false)
+  const [hpLedmPortSaving, setHpLedmPortSaving] = useState(false)
+  const [hpCdmPortDraft, setHpCdmPortDraft] = useState('')
+  const [hpCdmPortDirty, setHpCdmPortDirty] = useState(false)
+  const [hpCdmPortSaving, setHpCdmPortSaving] = useState(false)
+  const [hpToggling, setHpToggling] = useState(false)
+  useEffect(() => {
+    if (!hpLedmPortDirty && settings) setHpLedmPortDraft(String(settings.hpLedmPort ?? 8080))
+    if (!hpCdmPortDirty && settings) setHpCdmPortDraft(String(settings.hpCdmPort ?? 80))
+  }, [settings, hpLedmPortDirty, hpCdmPortDirty])
+
+  const toggleHpLedmProbe = async (enabled: boolean) => {
+    setHpToggling(true)
+    try {
+      await client.updateSettings({ hpLedmProbeEnabled: enabled })
+      await refresh()
+      toast.success(enabled ? 'HP LEDM/CDM 探测已启用' : 'HP LEDM/CDM 探测已关闭', {
+        description: enabled
+          ? '下次「刷新能力」时将向打印机 LEDM（:8080）与 CDM（:80）端点发起 HTTP 探测（IPP → SNMP → PJL → HP 兕底）'
+          : 'VENDOR_API 来源不再探测 HP 通道（安全默认）',
+      })
+    } catch (e) {
+      toast.error('设置失败', { description: (e as Error).message })
+    } finally {
+      setHpToggling(false)
+    }
+  }
+
+  const saveHpLedmPort = async () => {
+    const n = Number(hpLedmPortDraft.trim())
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      toast.error('LEDM 端口无效', { description: '需为 1-65535 整数（真实 HP 8080）' })
+      return
+    }
+    setHpLedmPortSaving(true)
+    try {
+      await client.updateSettings({ hpLedmPort: n })
+      setHpLedmPortDirty(false)
+      await refresh()
+      toast.success('LEDM 端口已保存', { description: `下次「刷新能力」时请求 http://打印机:${n}/DevMgmt/*.xml（真实 HP 8080）` })
+    } catch (e) {
+      toast.error('保存失败', { description: (e as Error).message })
+    } finally {
+      setHpLedmPortSaving(false)
+    }
+  }
+
+  const saveHpCdmPort = async () => {
+    const n = Number(hpCdmPortDraft.trim())
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      toast.error('CDM 端口无效', { description: '需为 1-65535 整数（真实 HP 80）' })
+      return
+    }
+    setHpCdmPortSaving(true)
+    try {
+      await client.updateSettings({ hpCdmPort: n })
+      setHpCdmPortDirty(false)
+      await refresh()
+      toast.success('CDM 端口已保存', { description: `下次「刷新能力」时请求 http://打印机:${n}/cdm/supply/v1/suppliesPublic（真实 HP 80）` })
+    } catch (e) {
+      toast.error('保存失败', { description: (e as Error).message })
+    } finally {
+      setHpCdmPortSaving(false)
+    }
+  }
+
   const myRequestPending = requesting || pendingRequests.some((r) => r.deviceId === device.deviceId)
 
   return (
@@ -434,6 +502,98 @@ export function PairingView() {
             可用 <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">@PJL INFO STATUS / SUPPLY</code> 回读状态与耗材。
             通道优先级 <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">IPP → SNMP → PJL</code>（仅在前面来源未读到时补充；CODE 无法映射的未知状态不猜测）。
             默认关闭是安全默认（避免与在用打印通道互扰）；<span className="text-foreground/80">@PJL INFO SUPPLY 为 Brother 风格试点格式，真实机型响应需抓包适配</span>。
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Globe className="size-4 text-muted-foreground" aria-hidden />
+            HP LEDM/CDM 探测设置（HTTP）
+            {settings?.hpLedmProbeEnabled === true ? (
+              <Badge variant="outline" className="gap-1 border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                已启用
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-zinc-400" aria-hidden />
+                默认关闭
+              </Badge>
+            )}
+            <Badge variant="secondary" className="font-mono text-[10px]">P9 · HPLIP 实证通道</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between rounded-md border px-3 py-2.5">
+            <div className="min-w-0">
+              <Label htmlFor="hp-ledm-probe" className="cursor-pointer">
+                启用 HP LEDM/CDM 回读（XML / JSON 耗材 · 纸盒 · 状态）
+              </Label>
+              <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                向打印机 HTTP 端点发起只读 GET（超时 1200ms，四文档并行）
+              </p>
+            </div>
+            <Switch
+              id="hp-ledm-probe"
+              checked={settings?.hpLedmProbeEnabled === true}
+              onCheckedChange={(v) => void toggleHpLedmProbe(v)}
+              disabled={hpToggling}
+              aria-label="启用 HP LEDM/CDM 探测"
+            />
+          </div>
+          <div className="grid gap-2 min-[420px]:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="hp-ledm-port">LEDM 端口（真实 HP 8080）</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="hp-ledm-port"
+                  value={hpLedmPortDraft}
+                  onChange={(e) => {
+                    setHpLedmPortDraft(e.target.value.replace(/\D/g, '').slice(0, 5))
+                    setHpLedmPortDirty(true)
+                  }}
+                  inputMode="numeric"
+                  placeholder="8080"
+                  className="min-w-0 flex-1 font-mono text-xs"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button className="shrink-0" onClick={() => void saveHpLedmPort()} disabled={hpLedmPortSaving || !hpLedmPortDirty || Number(hpLedmPortDraft) === (settings?.hpLedmPort ?? 8080)}>
+                  {hpLedmPortSaving ? '保存中…' : '保存'}
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="hp-cdm-port">CDM 端口（真实 HP 80）</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="hp-cdm-port"
+                  value={hpCdmPortDraft}
+                  onChange={(e) => {
+                    setHpCdmPortDraft(e.target.value.replace(/\D/g, '').slice(0, 5))
+                    setHpCdmPortDirty(true)
+                  }}
+                  inputMode="numeric"
+                  placeholder="80"
+                  className="min-w-0 flex-1 font-mono text-xs"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button className="shrink-0" onClick={() => void saveHpCdmPort()} disabled={hpCdmPortSaving || !hpCdmPortDirty || Number(hpCdmPortDraft) === (settings?.hpCdmPort ?? 80)}>
+                  {hpCdmPortSaving ? '保存中…' : '保存'}
+                </Button>
+              </div>
+            </div>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+            HP 官方驱动 HPLIP 源码（v3.26.4 逆向归档）实证的双通道：<code className="rounded bg-muted px-1 py-px font-mono text-[10px]">LEDM :8080</code>
+            XML 三文档（<code className="break-words rounded bg-muted px-1 py-px font-mono text-[10px]">/DevMgmt/ProductStatusDyn</code>·<code className="break-words rounded bg-muted px-1 py-px font-mono text-[10px]">ConsumableConfigDyn</code>·<code className="break-words rounded bg-muted px-1 py-px font-mono text-[10px]">MediaHandlingDyn</code>，hpmud/jd.c:507）与
+            <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">CDM :80</code> JSON（<code className="break-words rounded bg-muted px-1 py-px font-mono text-[10px]">/cdm/supply/v1/suppliesPublic</code>）。
+            可回读<strong className="text-foreground">耗材余量（逐色墨盒）、纸盒列表、自动双面器、状态类别</strong>——通道优先级
+            <code className="rounded bg-muted px-1 py-px font-mono text-[10px]">IPP → SNMP → PJL → HP</code>；探测失败/404/字段缺失一律 UNKNOWN（读不到≠不支持）。
+            <span className="text-foreground/80">XML 响应格式对齐 HPLIP 解析路径；真实机型的响应细节仍以实测为准（解析宽容，未知类别不猜测）。</span>
           </p>
         </CardContent>
       </Card>

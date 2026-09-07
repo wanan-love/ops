@@ -15,7 +15,7 @@
 | **Windows 已实现什么？** | Win32_Printer 单查询枚举（名称/默认/驱动/端口/共享/网络）+ `DetectedErrorState` 官方错误码映射（无纸/卡纸/离线/门开）+ Capabilities 位掩码三态解析 + `Start-Process -Verb PrintTo` 提交（v0.4.3：PDF 临时文件传递，修复命令行长度上限）。**DeviceCapabilities API 驱动级能力已实现（P5 ✔ v0.4.3）**：DC_PAPERNAMES 纸型列表 / DC_DUPLEX 翻转模式 / DC_COPIES 份数上限 / DC_BINNAMES 纸盒列表 / DC_COLORDEVICE 彩色（只提升 UNKNOWN、不降级 WMI 结论；墨量仍无源 UNKNOWN） |
 | **CUPS/IPP 能实现什么？** | CUPS：lpstat 枚举 + IPP localhost:631 Get-Printer-Attributes 全套（media-supported/sides-supported/copies-supported/printer-state-reasons/marker-levels?）；IPP 直连：RFC 8010/8011 自研栈已支持 + ipps TLS。IPP `marker-levels` 属**可选属性**——很多机型不返回，必须 UNKNOWN 容忍 |
 | **厂商驱动额外实现了什么？** | 官方驱动比标准协议多的是：墨量精确图形界面（私有双向通道）、维修件计数、纸盒明细、色彩管理。通道 = 厂商私有 SNMP MIB（HP/Lexmark 公开可下载；Ricoh NDA；Kyocera/KM 不公开）、PJL INFO 扩展（HP 发明、Brother 变体）、私有 HTTP/EWS。**P8 官方驱动逆向实证五包**：HP HPLIP 源码（LEDM XML /CDM JSON HTTP 端点 + PML→RFC 3805 + 9100/9101/9102 通道表 + Device-ID SNMP OID）、Canon cnijfilter2（ivec XML GetStatus/Cleaning + BJNP UDP 8611 + Cnmpu2_port9100 + HTTP /canon/ij/command*）、Brother pdrv（PJL 流 UEL+SET OUTBIN + 安装器默认 LPD BINARY_P1）、Epson 双代（escpr 墨量 API/代际断崖）、Lexmark inkjet-08（NPA 私有协议 + host-based）——均归档 `docs/vendor-evidence/`（详见 `MULTI_BRAND_DRIVERS_ANALYSIS.md`） |
-| **哪些功能目前可靠可做？** | ① SNMP RFC 3805（已实现；HP HPLIP 官方代码正面实证同读法）② PJL INFO STATUS（已实现；Brother 官方驱动实证 PJL 语言层，SUPPLY 响应需真机）③ IPP 属性（已实现；HPLIP 亦将 IPP 列为官方 13 类状态通道之一）④ Windows WMI（已实现）⑤ HP-LASERJET-COMMON-MIB / LEXMARK-MIB 厂商适配（公开 MIB，证据充分，可作下两个 Vendor Adapter）⑥ Windows DeviceCapabilities API（微软官方 API，驱动级真实能力）⑦ **HP LEDM/CDM HTTP 适配（P8 新候选，官方源码实证，需真机验证响应）** |
+| **哪些功能目前可靠可做？** | ① SNMP RFC 3805（已实现；HP HPLIP 官方代码正面实证同读法）② PJL INFO STATUS（已实现；Brother 官方驱动实证 PJL 语言层，SUPPLY 响应需真机）③ IPP 属性（已实现；HPLIP 亦将 IPP 列为官方 13 类状态通道之一）④ Windows WMI（已实现）⑤ HP-LASERJET-COMMON-MIB / LEXMARK-MIB 厂商适配（公开 MIB，证据充分，可作下两个 Vendor Adapter）⑥ Windows DeviceCapabilities API（微软官方 API，驱动级真实能力）⑦ **HP LEDM/CDM HTTP 适配（✅ P9 已实现 v0.4.7：LEDM :8080 XML 三文档 + CDM :80 JSON 只读探测 + 场景 22 全链路自测；真实机型响应细节以实测为准）** |
 | **哪些功能暂时不能做及原因？** | Ricoh 私有 MIB（官网 NDA 下载）；Kyocera KMnetViewer / Konica Minolta PageScope 私有 MIB（未公开）；WMI 本地打印机墨量（无标准字段）；打印速度 ppm（所有标准通道均无真实字段）。**Epson 消费级墨量（代际拆分，P7 双逆向）**：新代（L4350 等）官方驱动逆向（escpr 1.7.9 libescpr）实证墨量 API 存在（`epsGetSupplyInfo`/`epsGetInkInfo`）但无公开 ABI——「可研究但需真机」；**老代低端（L130…L455，201401w 驱动）官方库零状态 API 零网络栈——Linux 侧官方自身不提供任何读取通道，IPP/SNMP 读不到即 UNKNOWN 终态** |
 
 ---
@@ -99,7 +99,7 @@
 ## 5. 下一步功能建议（按证据强度排序，先研究后开发原则）
 
 1. ~~**Windows DeviceCapabilities API 适配**~~ **✅ P5 已完成（v0.4.3）**：`src/backends/devicecaps.ts`（Add-Type P/Invoke 单次查询 5 项）+ windows.ts 双层能力（WMI 基线 → DC 只提升 UNKNOWN）+ paperTrays 能力轴（前后端 + merge）+ 45s 枚举缓存 + 场景 21 platform-runtime 平台守卫 + PDF 临时文件提交修复。真机验收待 Windows 硬件。
-2. **HP LEDM/CDM HTTP 适配器（P8 新增候选，证据级最高）**：官方 HPLIP 源码实证端点（`/DevMgmt/ConsumableConfigDyn.xml`·`/cdm/supply/v1/suppliesPublic`），面向 SNMP 禁用的 HP 消费喷墨；**需真机验证响应格式后开发**。
+2. ~~**HP LEDM/CDM HTTP 适配器**~~ ✅ **已完成（P9 · v0.4.7）**：LEDM :8080 XML 三文档（ProductStatusDyn/ConsumableConfigDyn/MediaHandlingDyn）+ CDM :80 JSON（suppliesPublic）双通道只读探测落地（Virtual LEDM :3068 + 场景 22 全链路 + 404→UNKNOWN 兜底回归）；真实 HP 机型响应细节以实测为准（无真机不宣称格式细节）。
 3. **HP 私有 MIB 适配器**（HP-LASERJET-COMMON-MIB 公开）——维修件计数/页计数/纸盒增强。
 4. **Lexmark MIB 适配器**（官方文档 + LEXMARK-MPS-MIB 公开）——同上并列。
 5. **Brother PJL SUPPLY 真机抓包适配**——PJL 语言层使用已获官方驱动实证（UEL+@PJL SET），需真机验证 INFO 响应格式。

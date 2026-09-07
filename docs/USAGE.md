@@ -104,6 +104,13 @@ openprintshare [--port 3001] [--ws-port 3002] [--data-dir <目录>] [--web <目�
   - **端口**：真实设备通用 9100（默认），测试环境可指向 Virtual PJL Printer（:3067）；
   - **通道优先级**：IPP → SNMP → PJL（仅在前面来源未读到时补充）；未知 CODE 不映射状态（三态原则：不猜测）；
   - **如实声明**：`@PJL INFO STATUS` 为 HP PJL 参考手册标准；`@PJL INFO SUPPLY` 为 Brother 风格试点格式（公开资料未完全标准化），真实机型响应需抓包适配。
+- **HP LEDM/CDM 探测（HTTP 双通道回读，v0.4.7）**：「设备配对」页「HP LEDM/CDM 探测设置（HTTP）」卡片：
+  - **默认关闭**（安全默认），启用后「刷新能力」时向打印机发起四文档并行只读 GET（超时 1200ms，失败/404 仅记探测记录 → 该轴保持 UNKNOWN，绝不猜测）；
+  - **适用场景**：HP 消费级/商用机型（面向 SNMP 被禁用但本机 HTTP 端点开放的机型）；通道证据为 HP 官方 HPLIP 3.26.4 源码（LEDM :8080 XML 三文档 + CDM :80 JSON，`docs/vendor-evidence/hplip-code/`）；
+  - **可回读能力**：耗材余量（逐色墨盒百分比与 SKU）、纸盒列表（Tray1/Tray2/PhotoTray 等）、自动双面器（有→双面 both 宽松声明，翻转模式未知）、状态类别（ready/processing/jamInPrinter/trayEmptyOrOpen 等官方枚举子集映射，未知类别不映射）；
+  - **端口**：LEDM 真实 HP 8080 / CDM 真实 HP 80（默认），测试环境可均指向 Virtual HP LEDM/CDM Printer（:3068）；
+  - **通道优先级**：IPP → SNMP → PJL → HP（逐层守卫：错误状态只由后端状态同步恢复，探测读到 ready 不覆盖已有错误状态）；
+  - **如实声明**：XML/JSON 解析路径对齐 HPLIP 官方实现（含命名空间剥除与宽容解析）；真实 HP 机型的响应细节（机型覆盖面、字段差异）仍以实测为准——无真机不宣称。
 - **Host 名称**：在「概览」页展示主机名 / Host ID / 版本 / 平台 / 运行时长，供客户端确认连接目标。
 
 ### 6. 查看状态

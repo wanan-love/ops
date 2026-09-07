@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { useOpsClient, useOpsStore } from './store'
 import { BackendBadge, EmptyState, formatTime } from './widgets'
-import type { DiscoveredIpPrinter, VippInfo, VpjlState } from '@/lib/ops/client'
+import type { DiscoveredIpPrinter, VippInfo, VledmState, VpjlState } from '@/lib/ops/client'
 import type { BackendStatus, BackendKind } from '@/lib/ops/types'
 import { BACKEND_LABEL } from '@/lib/ops/types'
 import type { TabValue } from './ops-app'
@@ -61,16 +61,59 @@ const PJL_CONDITION_CODE: Record<string, string> = {
   'toner-empty': '40037',
 }
 
+/** Virtual HP LEDM/CDM 调试状态注入清单（key = 后端 VledmCondition；StatusCategory 为 HPLIP 官方枚举） */
+const HP_LEDM_CONDITIONS: Array<{ key: string; label: string; hint: string }> = [
+  { key: 'ready', label: '就绪', hint: 'StatusCategory=ready → online' },
+  { key: 'busy', label: '打印中', hint: 'StatusCategory=processing → busy' },
+  { key: 'paper-out', label: '缺纸', hint: 'StatusCategory=trayEmptyOrOpen → paper-out（状态融合）' },
+  { key: 'paper-jam', label: '卡纸', hint: 'StatusCategory=jamInPrinter → paper-jam' },
+  { key: 'door-open', label: '门开', hint: 'StatusCategory=closeDoorOrCover → error' },
+  { key: 'hard-error', label: '硬错误', hint: 'StatusCategory=hardError → error' },
+  { key: 'toner-low', label: '墨量低', hint: '黑色墨 8%（StatusCategory=ready 不映射状态——耗材域）' },
+  { key: 'toner-empty', label: '墨尽', hint: '黑色墨 0% + ConsumableState=empty' },
+]
+
+const HP_LEDM_CONDITION_LABEL: Record<string, string> = {
+  ready: '就绪',
+  busy: '打印中',
+  'paper-out': '缺纸',
+  'paper-jam': '卡纸',
+  'door-open': '盖板开启',
+  'hard-error': '硬错误',
+  'toner-low': '墨量低',
+  'toner-empty': '墨尽',
+}
+
+const HP_LEDM_CATEGORY: Record<string, string> = {
+  ready: 'ready',
+  busy: 'processing',
+  'paper-out': 'trayEmptyOrOpen',
+  'paper-jam': 'jamInPrinter',
+  'door-open': 'closeDoorOrCover',
+  'hard-error': 'hardError',
+  'toner-low': 'ready',
+  'toner-empty': 'ready',
+}
+
+const HP_LEDM_STYLE_LABEL: Record<string, string> = {
+  namespaced: '带命名空间（真实 HP 同款 psdyn:/ccdyn:/mhdyn:）',
+  bare: '无前缀（验证宽容解析）',
+  '404': '全部 404（验证 UNKNOWN 兕底）',
+}
+
 export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
   const client = useOpsClient()
   const printers = useOpsStore((s) => s.printers)
   const refresh = useOpsStore((s) => s.refresh)
   const hostInfo = useOpsStore((s) => s.hostInfo)
   const vpjlPort = hostInfo?.vpjlPort ?? 3067
+  const vledmPort = hostInfo?.vledmPort ?? 3068
   const [backends, setBackends] = useState<BackendStatus[] | null>(null)
   const [vipp, setVipp] = useState<VippInfo | null>(null)
   const [vpjl, setVpjl] = useState<VpjlState | null>(null)
   const [pjlBusy, setPjlBusy] = useState(false)
+  const [vledm, setVledm] = useState<VledmState | null>(null)
+  const [hpBusy, setHpBusy] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [mdnsPrinters, setMdnsPrinters] = useState<DiscoveredIpPrinter[] | null>(null)
   const [uri, setUri] = useState('')
@@ -80,10 +123,11 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
 
   const loadStatus = useCallback(async () => {
     try {
-      const [b, v, j] = await Promise.all([client.backends(), client.vippPrinters(), client.vpjlState().catch(() => null)])
+      const [b, v, j, h] = await Promise.all([client.backends(), client.vippPrinters(), client.vpjlState().catch(() => null), client.vledmState().catch(() => null)])
       setBackends(b.backends)
       setVipp(v)
       setVpjl(j?.state ?? null)
+      setVledm(h?.state ?? null)
     } catch {
       /* 静默重试 */
     }
@@ -136,6 +180,38 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
       toast.error('注入失败', { description: (e as Error).message })
     } finally {
       setPjlBusy(false)
+    }
+  }
+
+  /** 注入 Virtual HP LEDM/CDM 调试状态（StatusCategory 为 HPLIP 官方枚举） */
+  const injectHpLedm = async (condition: string) => {
+    setHpBusy(true)
+    try {
+      const { state } = await client.setVledmCondition(condition)
+      setVledm(state)
+      toast.success(`已注入 HP LEDM 状态：${HP_LEDM_CONDITION_LABEL[condition] ?? condition}`, {
+        description: `StatusCategory=${HP_LEDM_CATEGORY[condition] ?? '?'}——到打印机页「刷新能力」验证 VENDOR_API 回读`,
+      })
+    } catch (e) {
+      toast.error('注入失败', { description: (e as Error).message })
+    } finally {
+      setHpBusy(false)
+    }
+  }
+
+  /** 切换 LEDM 应答风格（namespaced/bare/404：验证宽容解析与 UNKNOWN 兜底） */
+  const injectHpStyle = async (style: string) => {
+    setHpBusy(true)
+    try {
+      const { state } = await client.setVledmStyle(style)
+      setVledm(state)
+      toast.success(`已切换 LEDM 应答风格：${style}`, {
+        description: HP_LEDM_STYLE_LABEL[style] ?? style,
+      })
+    } catch (e) {
+      toast.error('切换失败', { description: (e as Error).message })
+    } finally {
+      setHpBusy(false)
     }
   }
 
@@ -429,6 +505,113 @@ export function BackendsView({ goto }: { goto: (v: TabValue) => void }) {
                 <button className="mx-0.5 underline decoration-dotted underline-offset-2" onClick={() => goto('printers')}>打印机页</button>
                 点「刷新能力」——VENDOR_API 探测记录与耗材融合即来自本设备回读。
                 <span className="text-foreground/80">未知 CODE 不映射状态（三态原则：不猜测）。</span>
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      )}
+
+      {/* ---------------- Virtual HP LEDM/CDM Printer（P9 · Vendor Adapter 仿真；仅开发/测试模式显示） */}
+      {devMode && (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <Globe className="size-4 text-muted-foreground" aria-hidden />
+            Virtual HP LEDM/CDM Printer
+            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              开发 / 测试工具
+            </Badge>
+            {vledm && (
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                :{vledmPort} · HTTP · LEDM/CDM
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            P9 Vendor Adapter——本地 HTTP 仿真（HPLIP 3.26.4 源码实证通道：LEDM <span className="font-mono">:8080</span> XML 三文档 +
+            CDM <span className="font-mono">:80</span> JSON）。在无实体 HP 打印机的环境中验证
+            <strong className="text-foreground"> HP LEDM/CDM 只读探测</strong>全链路：四文档并行 GET → 命名空间剥除解析
+            （耗材/纸盒/双面器/状态）→ 能力报告 VENDOR_API 来源融合。生产部署可用 OPS_VLEDM_ENABLED=0 关闭。
+          </p>
+          {!vledm ? (
+            <EmptyState title="Virtual HP LEDM/CDM Printer 未启用" hint="可通过环境变量 OPS_VLEDM_ENABLED=0 关闭；默认随 Host 启动（:3068）" />
+          ) : (
+            <div className="space-y-3">
+              <div className="grid gap-2 min-[420px]:grid-cols-3">
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">当前状态（StatusCategory）</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
+                    <span
+                      className={cn(
+                        'inline-block size-2 shrink-0 rounded-full',
+                        vledm.condition === 'ready' && 'bg-emerald-500',
+                        vledm.condition === 'busy' && 'bg-sky-500 animate-pulse',
+                        (vledm.condition === 'paper-out' || vledm.condition === 'paper-jam' || vledm.condition === 'door-open' || vledm.condition === 'hard-error' || vledm.condition === 'toner-empty') && 'bg-red-500',
+                        vledm.condition === 'toner-low' && 'bg-amber-500',
+                      )}
+                      aria-hidden
+                    />
+                    {HP_LEDM_CONDITION_LABEL[vledm.condition] ?? vledm.condition}
+                    <span className="font-mono text-[10px] text-muted-foreground/70">{HP_LEDM_CATEGORY[vledm.condition] ?? ''}</span>
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">应答风格（宽容解析验证）</p>
+                  <p className="mt-1 flex flex-wrap items-center gap-1.5">
+                    {(['namespaced', 'bare', '404'] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => void injectHpStyle(s)}
+                        disabled={hpBusy}
+                        title={HP_LEDM_STYLE_LABEL[s]}
+                        className={cn(
+                          'rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors duration-150 disabled:opacity-60',
+                          vledm.style === s
+                            ? 'border-primary/40 bg-primary/10 text-foreground'
+                            : 'border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                        )}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-2.5">
+                  <p className="text-[10px] text-muted-foreground/70">累计 HTTP 请求数</p>
+                  <p className="mt-1 font-mono text-sm font-medium">{vledm.requestCount.toLocaleString()}</p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>注入调试状态（验证 LEDM StatusCategory 回读 → 能力报告 VENDOR_API 融合）</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {HP_LEDM_CONDITIONS.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => void injectHpLedm(c.key)}
+                      disabled={hpBusy}
+                      className={cn(
+                        'rounded-md border px-2 py-1 text-[11px] transition-colors duration-150 disabled:opacity-60',
+                        vledm.condition === c.key
+                          ? 'border-primary/40 bg-primary/10 text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
+                      )}
+                      title={c.hint}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+                验证路径：在
+                <button className="mx-0.5 underline decoration-dotted underline-offset-2" onClick={() => goto('pairing')}>设备配对页</button>
+                启用「HP LEDM/CDM 探测设置」并将 LEDM/CDM 端口均指向 {vledmPort}，导入任一 vipp 打印机（backendUri 主机 127.0.0.1）后到
+                <button className="mx-0.5 underline decoration-dotted underline-offset-2" onClick={() => goto('printers')}>打印机页</button>
+                点「刷新能力」——VENDOR_API 探测记录、四色墨耗材融合、纸盒（Tray1/Tray2/PhotoTray）与双面器即来自本设备回读。
+                <span className="text-foreground/80">404 风格验证 UNKNOWN 兜底（读不到≠不支持）；未知 StatusCategory 不映射状态（三态原则）。</span>
               </p>
             </div>
           )}

@@ -4,6 +4,7 @@ import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
 import type { BackendKind, CapabilityReport } from '../core/types'
 import { probeSnmpConsumables, probeSnmpStatus, snmpHostFromUri, type SnmpProbeOptions } from '../backends/snmp'
 import { pjlHostFromUri, probePjlStatus, probePjlSupply, type PjlProbeOptions } from '../backends/pjl'
+import { hpHostFromUri, probeHpLedmCdm, type HpProbeOptions } from '../backends/hp-ledm'
 import type { CreatePrinterInput } from '../core/printers'
 import type { PrintOptions } from '../core/types'
 
@@ -253,6 +254,7 @@ export function buildRouter(): Router {
         } else if (printer.status === 'online' && status.status === 'busy') {
           ctx.printers.setStatus(printer, 'busy', status.message ?? 'PRINTING')
         }
+        pjlStatusApplied = true
       }
       // 状态回读无论耗材结果如何都记 probe（UI 展示该来源曾尝试 + 原始 CODE 诊断信息）
       const report = supply.report
@@ -261,10 +263,36 @@ export function buildRouter(): Router {
       }
       return [{ source: 'VENDOR_API' as const, report }]
     })()
+    // PJL 状态融合标记（HP 融合需要知道 IPP/SNMP/PJL 是否已应用——通道优先级链）
+    let pjlStatusApplied = false
+    // HP LEDM/CDM（P9 Vendor Adapter）：默认关闭（VENDOR_PROTOCOLS.md 安全默认）；与 PJL 同为 VENDOR_API 来源，
+    // 状态融合链 IPP → SNMP → PJL → HP（逐层「未被上层应用才生效」守卫）；探测失败仅记 probe 不猜测
+    const hpPromise = (async () => {
+      if (s.hpLedmProbeEnabled !== true) return [] as Array<{ source: 'VENDOR_API'; report: CapabilityReport }>
+      const host = printer.backendUri ? hpHostFromUri(printer.backendUri) : null
+      if (!host) return [] as Array<{ source: 'VENDOR_API'; report: CapabilityReport }>
+      const opts: HpProbeOptions = {
+        host,
+        ledmPort: s.hpLedmPort ?? 8080,
+        cdmPort: s.hpCdmPort ?? 80,
+        timeoutMs: 1200,
+      }
+      const hp = await probeHpLedmCdm(opts)
+      // 状态融合：仅当 IPP/SNMP/PJL 均未应用且打印机处于 online/busy（HP 是最后手段）
+      await Promise.all([snmpPromise, pjlPromise]).catch(() => undefined)
+      if (hp.status && !snmpStatusApplied && !pjlStatusApplied && (printer.status === 'online' || printer.status === 'busy')) {
+        if (hp.status !== 'online' && hp.status !== 'busy') {
+          ctx.printers.setStatus(printer, hp.status, `HP LEDM StatusCategory=${hp.rawCategory}`)
+        } else if (printer.status === 'online' && hp.status === 'busy') {
+          ctx.printers.setStatus(printer, 'busy', `HP LEDM StatusCategory=${hp.rawCategory ?? 'processing'}`)
+        }
+      }
+      return [{ source: 'VENDOR_API' as const, report: hp.report }]
+    })()
     // 扁平化合并 extras（refreshCapabilities 收单一 Promise<Array>）
     const extrasPromise = (async () => {
-      const [snmpList, pjlList] = await Promise.all([snmpPromise, pjlPromise])
-      return [...snmpList, ...pjlList]
+      const [snmpList, pjlList, hpList] = await Promise.all([snmpPromise, pjlPromise, hpPromise])
+      return [...snmpList, ...pjlList, ...hpList]
     })()
     const report = await ctx.printers.refreshCapabilities(printer, backend ?? null, extrasPromise)
     sendJson(res, 200, { printer, report })
@@ -319,6 +347,38 @@ export function buildRouter(): Router {
       return sendError(res, 400, 'condition 仅支持 ready | busy | warmup | offline | paper-out | paper-jam | door-open | toner-low | toner-empty')
     }
     sendJson(res, 200, { ok: true, state, message: `已注入 PJL 状态：${condition}` })
+  })
+
+  // ---------------------------------------------------------------- Virtual HP LEDM/CDM Printer 控制（P9 · Vendor Adapter 仿真）
+
+  /** 当前虚拟 HP 设备快照（condition/style/请求计数） */
+  router.get('/api/vledm/state', (ctx, _req, res) => {
+    if (!ctx.vledm) return sendError(res, 409, 'Virtual HP LEDM/CDM Printer 未启用（OPS_VLEDM_ENABLED=0）')
+    sendJson(res, 200, { state: ctx.vledm.state() })
+  })
+
+  /** 注入调试状态（HPLIP StatusCategory 官方枚举；配合打印机页「刷新能力」验证 HP 状态/耗材/纸盒回读） */
+  router.post('/api/vledm/condition', (ctx, _req, res, _params, _query, body) => {
+    if (!ctx.vledm) return sendError(res, 409, 'Virtual HP LEDM/CDM Printer 未启用（OPS_VLEDM_ENABLED=0）')
+    const input = parseJsonBody<{ condition?: string }>(body)
+    const condition = input?.condition
+    if (!condition) return sendError(res, 400, '请求体必须包含 condition')
+    const state = ctx.vledm.setCondition(condition)
+    if (!state) {
+      return sendError(res, 400, 'condition 仅支持 ready | busy | paper-out | paper-jam | door-open | hard-error | toner-low | toner-empty')
+    }
+    sendJson(res, 200, { ok: true, state, message: `已注入 HP LEDM 状态：${condition}` })
+  })
+
+  /** 注入应答风格（namespaced/bare/404：验证客户端命名空间剥除与探测失败→UNKNOWN 语义） */
+  router.post('/api/vledm/style', (ctx, _req, res, _params, _query, body) => {
+    if (!ctx.vledm) return sendError(res, 409, 'Virtual HP LEDM/CDM Printer 未启用（OPS_VLEDM_ENABLED=0）')
+    const input = parseJsonBody<{ style?: string }>(body)
+    const style = input?.style
+    if (!style) return sendError(res, 400, '请求体必须包含 style')
+    const state = ctx.vledm.setStyle(style)
+    if (!state) return sendError(res, 400, 'style 仅支持 namespaced | bare | 404')
+    sendJson(res, 200, { ok: true, state, message: `已注入 LEDM 应答风格：${style}` })
   })
 
   // ---------------------------------------------------------------- 扫描（P3 · eSCL）
@@ -670,7 +730,16 @@ export function buildRouter(): Router {
   })
 
   router.patch('/api/settings', async (ctx, _req, res, _params, _query, body) => {
-    const patch = parseJsonBody<{ hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string }>(body)
+    const patch = parseJsonBody<{
+      hostName?: string
+      securityMode?: 'open' | 'pairing'
+      snmpCommunity?: string
+      pjlProbeEnabled?: boolean
+      pjlPort?: number
+      hpLedmProbeEnabled?: boolean
+      hpLedmPort?: number
+      hpCdmPort?: number
+    }>(body)
     if (!patch) return sendError(res, 400, '请求体不是合法 JSON')
     if (patch.securityMode && patch.securityMode !== 'open' && patch.securityMode !== 'pairing') {
       return sendError(res, 400, 'securityMode 仅支持 open | pairing')
@@ -689,17 +758,31 @@ export function buildRouter(): Router {
       const p = Number(patch.pjlPort)
       if (!Number.isInteger(p) || p < 1 || p > 65535) return sendError(res, 400, 'pjlPort 需为 1-65535 整数（真实设备通用 9100）')
     }
+    if (patch.hpLedmProbeEnabled !== undefined && typeof patch.hpLedmProbeEnabled !== 'boolean') {
+      return sendError(res, 400, 'hpLedmProbeEnabled 需为布尔值')
+    }
+    if (patch.hpLedmPort !== undefined) {
+      const p = Number(patch.hpLedmPort)
+      if (!Number.isInteger(p) || p < 1 || p > 65535) return sendError(res, 400, 'hpLedmPort 需为 1-65535 整数（真实 HP 8080）')
+    }
+    if (patch.hpCdmPort !== undefined) {
+      const p = Number(patch.hpCdmPort)
+      if (!Number.isInteger(p) || p < 1 || p > 65535) return sendError(res, 400, 'hpCdmPort 需为 1-65535 整数（真实 HP 80）')
+    }
     const settings = await ctx.settings.patch({
       hostName: patch.hostName?.slice(0, 80),
       securityMode: patch.securityMode,
       snmpCommunity: patch.snmpCommunity,
       pjlProbeEnabled: patch.pjlProbeEnabled,
       pjlPort: patch.pjlPort,
+      hpLedmProbeEnabled: patch.hpLedmProbeEnabled,
+      hpLedmPort: patch.hpLedmPort,
+      hpCdmPort: patch.hpCdmPort,
     })
     ctx.log.record({
       type: 'security',
       topic: 'settings',
-      message: `Host 设置已更新（安全模式：${settings.securityMode}${patch.snmpCommunity !== undefined ? '，SNMP community 已更新' : ''}${patch.pjlProbeEnabled !== undefined ? `，PJL 探测 ${settings.pjlProbeEnabled === true ? '已启用' : '已关闭'}` : ''}${patch.pjlPort !== undefined ? `（端口 ${settings.pjlPort ?? 9100}）` : ''}）`,
+      message: `Host 设置已更新（安全模式：${settings.securityMode}${patch.snmpCommunity !== undefined ? '，SNMP community 已更新' : ''}${patch.pjlProbeEnabled !== undefined ? `，PJL 探测 ${settings.pjlProbeEnabled === true ? '已启用' : '已关闭'}` : ''}${patch.pjlPort !== undefined ? `（端口 ${settings.pjlPort ?? 9100}）` : ''}${patch.hpLedmProbeEnabled !== undefined ? `，HP LEDM/CDM 探测 ${settings.hpLedmProbeEnabled === true ? '已启用' : '已关闭'}` : ''}${patch.hpLedmPort !== undefined ? `（LEDM 端口 ${settings.hpLedmPort ?? 8080}）` : ''}${patch.hpCdmPort !== undefined ? `（CDM 端口 ${settings.hpCdmPort ?? 80}）` : ''}）`,
     })
     ctx.bus.emit('host:update', { info: ctx.hostInfo() })
     sendJson(res, 200, { settings })

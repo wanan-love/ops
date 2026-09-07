@@ -205,8 +205,16 @@ export function createOpsClient(port: number) {
     devices: () => request<{ devices: PairedDevice[] }>(port, 'GET', '/devices'),
     revokeDevice: (deviceId: string) => request<{ ok: boolean }>(port, 'DELETE', `/devices/${encodeURIComponent(deviceId)}`),
     settings: () => request<{ settings: HostSettings }>(port, 'GET', '/settings'),
-    updateSettings: (patch: { hostName?: string; securityMode?: 'open' | 'pairing'; snmpCommunity?: string; pjlProbeEnabled?: boolean; pjlPort?: number }) =>
-      request<{ settings: HostSettings }>(port, 'PATCH', '/settings', { json: patch }),
+    updateSettings: (patch: {
+      hostName?: string
+      securityMode?: 'open' | 'pairing'
+      snmpCommunity?: string
+      pjlProbeEnabled?: boolean
+      pjlPort?: number
+      hpLedmProbeEnabled?: boolean
+      hpLedmPort?: number
+      hpCdmPort?: number
+    }) => request<{ settings: HostSettings }>(port, 'PATCH', '/settings', { json: patch }),
 
     // console auth（P2 安全轮：管理面令牌）
     consoleAuth: (token: string) => request<{ ok: boolean; info: HostInfo }>(port, 'POST', '/console/auth', { json: { token } }),
@@ -252,6 +260,13 @@ export function createOpsClient(port: number) {
     vpjlState: () => request<{ state: VpjlState }>(port, 'GET', '/vpjl/state'),
     setVpjlCondition: (condition: string) =>
       request<{ ok: boolean; state: VpjlState; message?: string }>(port, 'POST', '/vpjl/condition', { json: { condition } }),
+
+    // Virtual HP LEDM/CDM Printer（P9 · Vendor Adapter 仿真）
+    vledmState: () => request<{ state: VledmState }>(port, 'GET', '/vledm/state'),
+    setVledmCondition: (condition: string) =>
+      request<{ ok: boolean; state: VledmState; message?: string }>(port, 'POST', '/vledm/condition', { json: { condition } }),
+    setVledmStyle: (style: string) =>
+      request<{ ok: boolean; state: VledmState; message?: string }>(port, 'POST', '/vledm/style', { json: { style } }),
 
     // mDNS 网络打印机发现
     mdnsScan: () => request<{ printers: DiscoveredIpPrinter[] }>(port, 'POST', '/discovery/mdns/scan'),
@@ -326,6 +341,16 @@ export interface VpjlState {
   rawPageCount: number
   /** 服务的连接总数（含已关闭） */
   connectionCount: number
+  updatedAt: string
+}
+
+/** Virtual HP LEDM/CDM Printer（P9 · HTTP 仿真）状态快照 */
+export interface VledmState {
+  condition: string
+  /** XML 命名空间风格（namespaced/bare/404：验证客户端宽容解析与 UNKNOWN 兕底） */
+  style: 'namespaced' | 'bare' | '404'
+  /** 服务累计 HTTP 请求数（含 404） */
+  requestCount: number
   updatedAt: string
 }
 

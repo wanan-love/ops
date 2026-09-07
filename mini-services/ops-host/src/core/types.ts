@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.4.6'
+export const OPS_VERSION = '0.4.7'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */
@@ -232,6 +232,13 @@ export interface HostSettings {
   pjlProbeEnabled?: boolean
   /** PJL 探测目标端口（真实设备通用 9100；测试环境可指向 Virtual PJL :3067） */
   pjlPort?: number
+  /** HP LEDM/CDM 双向探测（P9 Vendor Adapter；HPLIP 实证通道 LEDM HTTP 8080 XML + CDM HTTP 80 JSON）。
+ *  默认关闭（VENDOR_PROTOCOLS.md 安全默认）；仅在 IPP/SNMP/PJL 未读到时补充（merge 来源优先级 VENDOR_API 最低）。 */
+  hpLedmProbeEnabled?: boolean
+  /** LEDM 探测目标端口（真实 HP 8080——HPLIP hpmud/jd.c:507；测试指向 Virtual LEDM :3068） */
+  hpLedmPort?: number
+  /** CDM 探测目标端口（真实 HP 80；测试与 LEDM 同指 :3068） */
+  hpCdmPort?: number
   /** 控制台访问控制（P2 安全轮：REST/WS 管理面令牌；与设备配对轴相互独立）
    *  - enabled=false 时 token 恒为 null（启用时总是生成全新令牌，避免禁用期间的旧值泄露）
    *  - token 仅在启用期间存在（settings.json 持久化，Host 重启后仍有效）
@@ -375,6 +382,8 @@ export interface HostInfo {
   vscanPort?: number | null
   /** Virtual PJL Printer（RAW 9100 仿真）端口（null = 未启用；开发/测试用） */
   vpjlPort?: number | null
+  /** Virtual HP LEDM/CDM Printer（HTTP 仿真，P9 Vendor Adapter）端口（null = 未启用；开发/测试用） */
+  vledmPort?: number | null
 }
 
 // ---------------------------------------------------------------- 扫描（P3 · eSCL）

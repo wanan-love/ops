@@ -2,6 +2,7 @@ import type { HostContext } from '../host'
 import type { DiscoveredIpPrinter, BackendKind, HostInfo, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
 import { probePjlStatus, probePjlSupply } from '../backends/pjl'
+import { probeHpLedmCdm } from '../backends/hp-ledm'
 import { connect } from 'node:net'
 import { runScenarios, scenarioMeta, type ScenarioId } from './scenarios'
 
@@ -221,6 +222,18 @@ export interface ScenarioApi {
   }>
   /** 向 Virtual PJL 发送原始字节（UEL 包裹的数据段 → 验证 RAW 字节累计） */
   pjlSendRaw(data: string): Promise<void>
+  // ---- HP LEDM/CDM（P9 · Vendor Adapter：HPLIP 实证通道）----
+  /** Virtual HP LEDM/CDM Printer 是否启用（OPS_VLEDM_ENABLED=0 时 false → 场景 skipped） */
+  vledmAvailable(): boolean
+  /** 直连 HP LEDM/CDM 探测（不经 REST/路由层：客户端单元级，XML 三文档 + CDM JSON 并行） */
+  hpLedmDirectProbe(port: number): Promise<{
+    ok: boolean
+    status: string | null
+    rawCategory: string | null
+    consumables: Array<{ name: string; kind: string; color?: string; levelPct: number | null }>
+    trays: string[] | null
+    hasAutoDuplexor: boolean | null
+  }>
   /** 轮询等待打印机满足状态条件（IPP 后端状态同步 5s 轮询恢复等；超时抛 ScenarioFailure） */
   waitForPrinterStatus(printerId: string, predicate: (printer: Printer) => boolean, timeoutMs?: number): Promise<Printer>
   // ---- 平台运行时检测（真实性红线）----
@@ -467,6 +480,21 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
     // ---- PJL over RAW 9100（P4 · Vendor Adapter 试点）----
     vpjlAvailable() {
       return ctx.vpjl !== null
+    },
+    // ---- HP LEDM/CDM（P9 · Vendor Adapter：HPLIP 实证通道）----
+    vledmAvailable() {
+      return ctx.vledm !== null
+    },
+    async hpLedmDirectProbe(port) {
+      const result = await probeHpLedmCdm({ host: '127.0.0.1', ledmPort: port, cdmPort: port, timeoutMs: 1500 })
+      return {
+        ok: result.ok,
+        status: result.status,
+        rawCategory: result.rawCategory,
+        consumables: result.consumables,
+        trays: result.trays,
+        hasAutoDuplexor: result.hasAutoDuplexor,
+      }
     },
     async pjlDirectProbe(port) {
       const opts = { host: '127.0.0.1', port, timeoutMs: 1500 }

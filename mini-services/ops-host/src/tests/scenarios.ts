@@ -4,6 +4,7 @@ import { makeApi, ScenarioFailure, ScenarioSkipped, type ScenarioApi } from './s
 import { ippScenarios } from './scenarios-ipp'
 import { scanScenarios } from './scenarios-scan'
 import { pjlScenarios } from './scenarios-pjl'
+import { hpLedmScenarios } from './scenarios-hpledm'
 
 /**
  * 10 个内置自动化场景（对应“Mock Printer 自动化测试”需求）：
@@ -30,6 +31,9 @@ import { pjlScenarios } from './scenarios-pjl'
  * P4 追加（scenarios-pjl.ts，首个 Vendor Adapter 试点）：
  * 20. pjl-vendor-probe —— PJL over RAW 9100 双向探测（Virtual PJL :3067 → 状态/耗材回读 → VENDOR_API 融合）
  *
+ * P9 追加（scenarios-hpledm.ts，第二个 Vendor Adapter：HPLIP 源码实证通道）：
+ * 22. hp-ledm-vendor-probe —— HP LEDM/CDM Vendor Adapter 探测（Virtual LEDM :3068 → XML/JSON 回读 → 耗材/纸盒/双面/状态融合 → 404 UNKNOWN 兕底）
+ *
  * 审查迭代轮追加（真实性红线回归守卫）：
  * 21. platform-runtime —— 平台运行时检测完整性（platform 三值合法 / 信号链非空 / 后端可用性说明含运行时检测 / devMode 隔离标记）
  */
@@ -55,6 +59,7 @@ export type ScenarioId =
   | 'console-auth'
   | 'pjl-vendor-probe'
   | 'platform-runtime'
+  | 'hp-ledm-vendor-probe'
 
 interface Scenario {
   id: ScenarioId
@@ -377,7 +382,7 @@ function durationMs(job: PrintJob): number {
 }
 
 export function scenarioMeta(): Array<{ id: string; name: string; description: string }> {
-  return [...scenarios, ...ippScenarios, ...scanScenarios, ...pjlScenarios].map(({ id, name, description }) => ({ id, name, description }))
+  return [...scenarios, ...ippScenarios, ...scanScenarios, ...pjlScenarios, ...hpLedmScenarios].map(({ id, name, description }) => ({ id, name, description }))
 }
 
 export async function runScenarios(
@@ -392,6 +397,7 @@ export async function runScenarios(
     ...ippScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
     ...scanScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
     ...pjlScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
+    ...hpLedmScenarios.map((sc) => ({ ...sc, id: sc.id as ScenarioId, run: (api: ScenarioApi) => sc.run(api) })),
   ]
   for (const scenario of all) {
     if (!ids.includes(scenario.id)) continue

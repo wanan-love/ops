@@ -23,6 +23,7 @@ import { detectRuntimePlatform, isDevMode, platformLabel, runtimePlatformDetail 
 import { VirtualIppServer } from './vipp/server'
 import { VirtualScanServer } from './vscan/server'
 import { VirtualPjlServer } from './vpjl/server'
+import { VirtualLedmServer } from './vledm/server'
 import { ScanManager } from './core/scan'
 import { MdnsService } from './discovery/mdns'
 
@@ -46,6 +47,8 @@ export interface HostContext {
   vscan: VirtualScanServer | null
   /** Virtual PJL Printer（RAW 9100 仿真；OPS_VPJL_ENABLED=0 或启动失败时为 null） */
   vpjl: VirtualPjlServer | null
+  /** Virtual HP LEDM/CDM Printer（HTTP 8080/80 仿真，P9 Vendor Adapter；OPS_VLEDm_ENABLED=0 或启动失败时为 null） */
+  vledm: VirtualLedmServer | null
   /** 扫描域管理器（P3 · eSCL：设备/任务/页面图像） */
   scan: ScanManager
   /** 真实后端任务执行器（backend !== 'mock' 的打印机） */
@@ -178,6 +181,22 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     }
   }
 
+  // ---------------------------------------------------------------- Virtual HP LEDM/CDM Printer（HTTP 仿真，P9 Vendor Adapter；仅开发/测试模式）
+  const vledmEnabled = devMode && process.env.OPS_VLEDM_ENABLED !== '0'
+  const vledmPort = Number(process.env.OPS_VLEDM_PORT ?? 3068) || 3068
+  const vledmDataDir = process.env.OPS_VLEDM_DATA_DIR ?? resolve(dataDir, '..', 'virtual-ledm')
+  let vledm: VirtualLedmServer | null = null
+  if (vledmEnabled) {
+    vledm = new VirtualLedmServer({ port: vledmPort, dataDir: vledmDataDir })
+    try {
+      await vledm.start()
+    } catch (err) {
+      console.error('[ops-host] Virtual HP LEDM/CDM Printer 启动失败（继续以无 vledm 模式运行）：', err)
+      log.record({ type: 'host', topic: 'vledm', message: `Virtual HP LEDM/CDM Printer 启动失败：${err instanceof Error ? err.message : String(err)}` })
+      vledm = null
+    }
+  }
+
   // ---------------------------------------------------------------- 统一后端
   // IPP：开发模式对接 Virtual IPP（静态 vipp 档案）；正式模式静态列表为空（只保留手动 URI / mDNS 导入路径）
   const ippBackend = new IPPPrinterBackend({
@@ -220,6 +239,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
     vipp,
     vscan,
     vpjl,
+    vledm,
     scan,
     runner,
     statusSync,
@@ -257,6 +277,7 @@ export async function createOpsHost(opts: HostOptions): Promise<OpsHost> {
         vippTlsPort: vipp?.tlsActivePort ?? null,
         vscanPort: vscan?.port ?? null,
         vpjlPort: vpjl?.port ?? null,
+        vledmPort: vledm?.port ?? null,
       }
     },
     restartSimulated(): void {

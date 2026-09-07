@@ -188,6 +188,8 @@ export interface HostInfo {
   vippTlsPort?: number | null
   /** Virtual PJL Printer（RAW 9100 仿真）端口（null = 未启用；开发/测试用） */
   vpjlPort?: number | null
+  /** Virtual HP LEDM/CDM Printer（HTTP 仿真，P9 Vendor Adapter）端口（null = 未启用；开发/测试用） */
+  vledmPort?: number | null
 }
 
 export interface HostSettings {
@@ -199,6 +201,13 @@ export interface HostSettings {
   pjlProbeEnabled?: boolean
   /** PJL 探测目标端口（真实设备通用 9100；测试环境 Virtual PJL :3067） */
   pjlPort?: number
+  /** HP LEDM/CDM 双向探测（P9 Vendor Adapter；默认关闭需显式启用）
+ *  通道：LEDM HTTP 8080 XML + CDM HTTP 80 JSON（HPLIP 源码实证） */
+  hpLedmProbeEnabled?: boolean
+  /** LEDM 探测目标端口（真实 HP 8080；测试环境 Virtual LEDM :3068） */
+  hpLedmPort?: number
+  /** CDM 探测目标端口（真实 HP 80；测试与 LEDM 同指 :3068） */
+  hpCdmPort?: number
   /** 控制台访问控制（P2 安全轮：管理面令牌，与设备配对轴独立）
    *  token 仅在启用态非空（需已通过鉴权才能读到；禁用态为 null） */
   consoleAuth?: { enabled: boolean; token: string | null }
@@ -321,7 +330,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.4.6'
+export const OPS_VERSION = '0.4.7'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',
