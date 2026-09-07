@@ -601,3 +601,26 @@ Stage Summary:
 - 运维备忘：ops-host 必须 (setsid bun run dev >> host.log 2>&1 < /dev/null &) 启动；epson.com.cn 下载端点用 /api/Service/downloadFile?driveId&productId（downloadDriveNew 会 404）；自测结果 JSON 字段是 status:'pass' 而非 ok
 - 已知风险/未验证：①libescpr 私有 ABI 需真机抓包（作用域已限定新代）②DeviceCapabilities 真机行为仍待 Windows 硬件 ③下一阶段建议（VENDOR_RESEARCH §5 顺序不变）：HP-LASERJET-COMMON-MIB 适配器 → Lexmark MIB → Epson libescpr 真机（仅新代）→ Brother PJL SUPPLY 真机
 - cron「任务审查与持续迭代」任务 364017 持续有效（上一轮建立）
+
+---
+Task ID: P8
+Agent: main-agent
+Task: 用户指令「用同样的方法 自行搜索品牌打印机的代表性机型及其对应的驱动，逆向分析，再对照其修改本项目」→ 多品牌官方驱动逆向 + 口径修正 + v0.4.6
+
+Work Log:
+- 【检索】web-search 定位四品牌官方驱动页：Brother support.brother.com（HL-L2350DW os=128）/ HP HPLIP（SourceForge→403→deb.debian.org 归档取同源码 3.26.4）/ Canon asia.canon→pdisp01→gdlp01.c-wss.com 直链（cnijfilter2 6.90）/ Lexmark DR860→downloads.lexmark.com（inkjet-08）；Kyocera 下载中心纯 JS（adobedtm launch）无直链，诚实记录未获取
+- 【Brother 逆向】hll2350dwpdrv 4.0.0 deb（123KB）：PPD（InputSlot Manual+Tray1/Duplex 三值/Resolution 4 档 300·600·1200·HQ1200/Throughput=18 真实/ColorDevice False）+ brHLL2350DWfunc 官方能力文件（Copies 1-999/TonerSave/Sleep/纸源通用集）+ rawtobr3 二进制（**输出完整 PJL 流 UEL+@PJL JOB/EOJ/SET，SET OUTBIN=OPTIONALOUTPUTBIN1..4**）+ 官方安装器（**网络默认 lpd://IP/BINARY_P1 非 9100**）
+- 【HP 逆向】HPLIP 3.26.4 源码（9.4MB，2,847 文件）：hpmud/jd.c 端口表（Print 9100/9101/9102、Scan 9290 系、Generic 9220 系、CLJ28xx 8290 hack）+ device_id() SNMP GET 1.3.6.1.4.1.11.2.3.9.1.1.7.0（旧机 community public.1 重试）+ base/pml.py（StdToSNMP→1.3.6.1.2.1.43 RFC 3805；HPToSNMP→11.2.3.9.4.2 私有树；OID_MARKER_SUPPLIES_TYPE_x toner=3/ink=5/cart=6）+ base/status.py+device.py（**LEDM HTTP XML /DevMgmt/ProductStatusDyn·ConsumableConfigDyn·MediaHandlingDyn.xml 与 CDM HTTP JSON /cdm/supply/v1/suppliesPublic 本机端点**；StatusType 13 类含 IPP）
+- 【Canon 逆向】cnijfilter2 6.90（179 PPD：Duplex 全家族三值/无 InputSlot/600dpi 单档/Throughput 占位 1/19 纸型含 .bl 无边距/13 介质）：libcnbpnet30 **Cnmpu2_port9100 通道类 + Cnmpu2_http 类 + /canon/ij/command1/port1..2·command2/port1..5 HTTP 路径常量** + libcnnet2 反汇编 0x21A3=**BJNP UDP 8611** + libcnbpcnclapicom2 **ivec XML GetStatus（servicetype=device/maintenance/print）+Cleaning（inkgroup）命令** + cnijlgmon3 官方状态监视器 + tocnpwg（PWG Raster）双数据格式
+- 【Lexmark 逆向】inkjet-08（2009，nixstaller --noexec → LZMA → tar → deb）：lx2600.ppd（无 Duplex/无 InputSlot/Throughput=15/host-based cupsFilter→专有 printdriver）+ libhdctransport/libnpa407 **NPA 私有双向协议（NpaProtocol/NPA407Comm 走 USBLP_PORT）**
+- 【对照修正】①VENDOR_PROTOCOLS.md：Brother 行（LPD BINARY_P1 默认修正+PJL 官方实证+PPD 真实声明）、HP 行（HPLIP 五通道+LEDM/CDM 新发现）、Canon 行（9100/BJNP/ivec XML/HTTP 路径实证替换「口径不一」）、Lexmark 行（NPA 消费线双轨）、Linux 驱动行、横向规律 2；②VENDOR_RESEARCH.md：摘要表两行（厂商驱动额外实现+可靠可做）、§2 厂商表四行证据升级、§5 优先级重排（新增 HP LEDM/CDM 第二位+Canon ivec 第七位）、§6 证据区 P8 条目；③代码层：pjl.ts 头注释加官方证据引用（保持「SUPPLY 响应需真机」试点声明）；代码三态逻辑零冲突（P6/P7 已收紧）
+- 【证据归档】docs/vendor-evidence/：四包+PPD×4+能力文件+安装器脚本+HPLIP 关键源码四文件（4.4MB）+ MULTI_BRAND_DRIVERS_ANALYSIS.md 完整报告（含跨品牌五包合并对照表）
+- 【发布】v0.4.5→0.4.6（三处版本+README badge/特性条/roadmap #20）；lint 0 错误；host 重启 → 21/21 自测（tr-mtqqp3kp-6048）零残留；agent-browser :81 QA（v0.4.6 显示 · 打印机页 3 种子+Chip 正常 · 393/1280 双视口零溢出 · 零 console error · footer 正常）；push main b251c54（20 文件 +16020）
+
+Stage Summary:
+- 交付：四品牌（Brother/HP/Canon/Lexmark）官方 Linux 驱动完整逆向证据链归档；项目厂商文档五处弱证据断言被官方代码实证修正（最重要：Brother「默认 9100」→LPD BINARY_P1；Canon BJNP「口径不一」→UDP 8611 官方实证）；新增 HP LEDM/CDM 与 Canon ivec XML 两个 Vendor Adapter 候选；v0.4.6 发布推送
+- 核心结论：官方驱动逆向三轮（Epson×2+四品牌）后跨品牌图景完整——①9100 打印端口 HP/Canon 官方依赖、Brother 设备侧支持但安装器 LPD 默认（传输逐厂商声明）；②状态通道多样性（HP 五通道/Canon ivec XML/HP PML→RFC 3805/Epson 代际断崖/Lexmark NPA）证明「三态+实测探测」架构唯一正确；③PJL 双向通道获 Brother 官方语言层背书（P4 试点战略价值）；④PPD Throughput 真实性逐厂商（Brother/Lexmark 真实、Epson/Canon 占位）维持「ppm 只信 IPP/SNMP」
+- 项目状态：稳定（21/21、lint 0、双视口零溢出、零 console error、零残留、CI 预期绿）
+- 运维备忘：Brother 下载需 EULA howto 页泄链（download.brother.com/welcome/{dlid}/）；HPLIP SourceForge 403 走 deb.debian.org；Canon gdlp01.c-wss.com 直链 curl 友好；Lexmark .sh.zip 用 nixstaller --noexec + xz --format=lzma
+- 已知风险/未验证：①所有私有通道响应格式（HP LEDM/CDM、Canon ivec XML、Brother SUPPLY、Epson libescpr）均需真机——无真机不开发不宣称；②Kyocera 官方驱动未获取（JS 下载中心）；③下一阶段建议（VENDOR_RESEARCH §5 新序）：HP LEDM/CDM HTTP 适配器（源码证据级最高）→ HP 私有 MIB → Lexmark MIB → Brother PJL SUPPLY 真机 → Epson libescpr（仅新代）→ Canon ivec XML
+- cron「任务审查与持续迭代」任务 364017 持续有效（P5 建立）
