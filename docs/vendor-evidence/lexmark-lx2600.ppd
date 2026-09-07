@@ -1,0 +1,341 @@
+*PPD-Adobe: "4.3"
+*% PPD file for 2600 Series with CUPS.
+*% Created by the CUPS PPD Compiler v1.2.3.
+*FormatVersion: "4.3"
+*FileVersion: "1.0"
+*LanguageVersion: English
+*LanguageEncoding: ISOLatin1
+*PCFileName: "lx2600.ppd"
+*Product: "(Lexmark 2600 Series)"
+*Manufacturer: "Lexmark"
+*ModelName: "Lexmark 2600 Series"
+*ShortNickName: "Lexmark 2600 Series"
+*NickName: "Lexmark 2600 Series, 1.0"
+*PSVersion: "(3010.000) 705"
+*PSVersion: "(3010.000) 707"
+*PSVersion: "(3010.000) 815"
+*PSVersion: "(3010.000) 853"
+*LanguageLevel: "3"
+*ColorDevice: True
+*DefaultColorSpace: RGB
+*FileSystem: False
+*Throughput: "15"
+*LandscapeOrientation: Minus90
+*TTRasterizer: Type42
+*% Driver-defined attributes...
+*PID: "0x011D"
+*VID: "0x043D"
+*ModelPrefix: "lxdn"
+*cupsVersion: 1.2
+*cupsModelNumber: 1
+*cupsManualCopies: True
+*cupsFilter: "application/vnd.cups-raster 0 /usr/local/lexmark/lxk08/bin/printdriver"
+*OpenUI *PageSize/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageSize
+*DefaultPageSize: Letter
+*PageSize Letter/US Letter: "<</cupsCompression 1/PageSize[612.00 792.00]/ImagingBBox null>>setpagedevice"
+*PageSize LetterBL/US Letter (Borderless): "<</cupsCompression 101/PageSize[650.00 866.00]/ImagingBBox null>>setpagedevice"
+*PageSize LetterBA/US Letter (Banner): "<</cupsCompression 2/PageSize[612.00 7920.00]/ImagingBBox null>>setpagedevice"
+*PageSize Legal/US Legal: "<</cupsCompression 9/PageSize[612.00 1008.00]/ImagingBBox null>>setpagedevice"
+*PageSize LegalBL/US Legal (Borderless): "<</cupsCompression 109/PageSize[648.00 1080.00]/ImagingBBox null>>setpagedevice"
+*PageSize Statement/US Statement: "<</cupsCompression 16/PageSize[396.00 612.00]/ImagingBBox null>>setpagedevice"
+*PageSize Executive/US Executive: "<</cupsCompression 10/PageSize[522.00 756.00]/ImagingBBox null>>setpagedevice"
+*PageSize A4/A4: "<</cupsCompression 8/PageSize[595.20 841.80]/ImagingBBox null>>setpagedevice"
+*PageSize A4BL/A4 (Borderless): "<</cupsCompression 108/PageSize[616.20 915.80]/ImagingBBox null>>setpagedevice"
+*PageSize A4BA/A4 (Banner): "<</cupsCompression 2/PageSize[595.20 8419.00]/ImagingBBox null>>setpagedevice"
+*PageSize A5/A5: "<</cupsCompression 7/PageSize[419.40 595.20]/ImagingBBox null>>setpagedevice"
+*PageSize A5BL/A5 (Borderless): "<</cupsCompression 107/PageSize[440.60 669.20]/ImagingBBox null>>setpagedevice"
+*PageSize B5JIS/B5: "<</cupsCompression 15/PageSize[516.00 728.40]/ImagingBBox null>>setpagedevice"
+*PageSize B5JISBL/B5 (Borderless): "<</cupsCompression 115/PageSize[537.20 802.40]/ImagingBBox null>>setpagedevice"
+*PageSize Envelope10/#10 Envelope: "<</cupsCompression 3/PageSize[297.00 684.00]/ImagingBBox null>>setpagedevice"
+*PageSize Envelope9/#9 Envelope: "<</cupsCompression 3/PageSize[286.00 639.00]/ImagingBBox null>>setpagedevice"
+*PageSize Envelope734/US 7 3/4 Envelope: "<</cupsCompression 3/PageSize[279.00 540.00]/ImagingBBox null>>setpagedevice"
+*PageSize Envelope634/US 6 3/4 Envelope: "<</cupsCompression 3/PageSize[261.00 468.00]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeA2/A2 Baronial: "<</cupsCompression 3/PageSize[315.00 414.00]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeB5/B5 Envelope: "<</cupsCompression 3/PageSize[499.00 708.60]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeC6/C6 Envelope: "<</cupsCompression 3/PageSize[324.40 459.00]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeDL/DL Envelope: "<</cupsCompression 3/PageSize[312.00 623.70]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeChokei3/Chokei 3 Envelope: "<</cupsCompression 3/PageSize[340.20 666.00]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeChokei4/Chokei 4 Envelope: "<</cupsCompression 3/PageSize[255.06 581.40]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeChokei40/Chokei 40 Envelope: "<</cupsCompression 3/PageSize[255.00 637.80]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeKakugata3/Kakugata 3 Envelope: "<</cupsCompression 3/PageSize[612.40 785.20]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeKakugata4/Kakugata 4 Envelope: "<</cupsCompression 3/PageSize[558.50 756.84]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeKakugata5/Kakugata 5 Envelope: "<</cupsCompression 3/PageSize[538.60 680.40]/ImagingBBox null>>setpagedevice"
+*PageSize EnvelopeKakugata6/Kakugata 6 Envelope: "<</cupsCompression 3/PageSize[459.00 649.20]/ImagingBBox null>>setpagedevice"
+*PageSize Card3x5/US 3 x 5 Card: "<</cupsCompression 1/PageSize[216.00 360.00]/ImagingBBox null>>setpagedevice"
+*PageSize CardA6/A6 Card: "<</cupsCompression 1/PageSize[297.60 419.40]/ImagingBBox null>>setpagedevice"
+*PageSize CardA6BL/A6 Card (Borderless): "<</cupsCompression 101/PageSize[318.80 493.40]/ImagingBBox null>>setpagedevice"
+*PageSize PostcardHagaki/Hagaki Postcard: "<</cupsCompression 4/PageSize[283.50 419.40]/ImagingBBox null>>setpagedevice"
+*PageSize PostcardHagakiBL/Hagaki Postcard (Borderless): "<</cupsCompression 104/PageSize[304.70 493.40]/ImagingBBox null>>setpagedevice"
+*PageSize Photo312x5/US 3 1/2 x 5 Photo: "<</cupsCompression 19/PageSize[251.87 360.00]/ImagingBBox null>>setpagedevice"
+*PageSize Photo312x5BL/US 3 1/2 x 5 Photo (Borderless): "<</cupsCompression 119/PageSize[273.07 434.00]/ImagingBBox null>>setpagedevice"
+*PageSize 4x6/US 4 x 6 in: "<</cupsCompression 11/PageSize[288.00 432.00]/ImagingBBox null>>setpagedevice"
+*PageSize 4x6BL/US 4 x 6 in (Borderless): "<</cupsCompression 111/PageSize[309.20 506.00]/ImagingBBox null>>setpagedevice"
+*PageSize 4x8/4 x 8 in: "<</cupsCompression 13/PageSize[288.00 576.00]/ImagingBBox null>>setpagedevice"
+*PageSize 4x8BL/4 x 8 in (Borderless): "<</cupsCompression 113/PageSize[309.20 650.00]/ImagingBBox null>>setpagedevice"
+*PageSize Photo5x7/US 5 x 7 Photo: "<</cupsCompression 1/PageSize[360.00 504.00]/ImagingBBox null>>setpagedevice"
+*PageSize Photo5x7BL/US 5 x 7 Photo (Borderless): "<</cupsCompression 101/PageSize[381.20 578.00]/ImagingBBox null>>setpagedevice"
+*PageSize PhotoL/L Photo: "<</cupsCompression 17/PageSize[252.40 360.00]/ImagingBBox null>>setpagedevice"
+*PageSize PhotoLBL/L Photo (Borderless): "<</cupsCompression 117/PageSize[273.60 434.00]/ImagingBBox null>>setpagedevice"
+*PageSize Photo2L/2L Photo: "<</cupsCompression 18/PageSize[360.00 504.60]/ImagingBBox null>>setpagedevice"
+*PageSize Photo2LBL/2L Photo (Borderless): "<</cupsCompression 118/PageSize[381.20 578.00]/ImagingBBox null>>setpagedevice"
+*PageSize 10x15cm/10 x 15 cm: "<</cupsCompression 12/PageSize[288.00 433.00]/ImagingBBox null>>setpagedevice"
+*PageSize 10x15cmBL/10 x 15 cm (Borderless): "<</cupsCompression 112/PageSize[309.20 507.00]/ImagingBBox null>>setpagedevice"
+*PageSize 13x18cm/13 x 18 cm: "<</cupsCompression 20/PageSize[360.00 505.20]/ImagingBBox null>>setpagedevice"
+*PageSize 13x18cmBL/13 x 18 cm (Borderless): "<</cupsCompression 120/PageSize[381.20 579.20]/ImagingBBox null>>setpagedevice"
+*PageSize 10x20cm/10 x 20 cm: "<</cupsCompression 14/PageSize[283.46 566.93]/ImagingBBox null>>setpagedevice"
+*PageSize 10x20cmBL/10 x 20 cm (Borderless): "<</cupsCompression 114/PageSize[302.66 638.93]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageSize
+*OpenUI *PageRegion/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageRegion
+*DefaultPageRegion: Letter
+*PageRegion Letter/US Letter: "<</cupsCompression 1/PageSize[612.00 792.00]/ImagingBBox null>>setpagedevice"
+*PageRegion LetterBL/US Letter (Borderless): "<</cupsCompression 101/PageSize[650.00 866.00]/ImagingBBox null>>setpagedevice"
+*PageRegion LetterBA/US Letter (Banner): "<</cupsCompression 2/PageSize[612.00 7920.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Legal/US Legal: "<</cupsCompression 9/PageSize[612.00 1008.00]/ImagingBBox null>>setpagedevice"
+*PageRegion LegalBL/US Legal (Borderless): "<</cupsCompression 109/PageSize[648.00 1080.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Statement/US Statement: "<</cupsCompression 16/PageSize[396.00 612.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Executive/US Executive: "<</cupsCompression 10/PageSize[522.00 756.00]/ImagingBBox null>>setpagedevice"
+*PageRegion A4/A4: "<</cupsCompression 8/PageSize[595.20 841.80]/ImagingBBox null>>setpagedevice"
+*PageRegion A4BL/A4 (Borderless): "<</cupsCompression 108/PageSize[616.20 915.80]/ImagingBBox null>>setpagedevice"
+*PageRegion A4BA/A4 (Banner): "<</cupsCompression 2/PageSize[595.20 8419.00]/ImagingBBox null>>setpagedevice"
+*PageRegion A5/A5: "<</cupsCompression 7/PageSize[419.40 595.20]/ImagingBBox null>>setpagedevice"
+*PageRegion A5BL/A5 (Borderless): "<</cupsCompression 107/PageSize[440.60 669.20]/ImagingBBox null>>setpagedevice"
+*PageRegion B5JIS/B5: "<</cupsCompression 15/PageSize[516.00 728.40]/ImagingBBox null>>setpagedevice"
+*PageRegion B5JISBL/B5 (Borderless): "<</cupsCompression 115/PageSize[537.20 802.40]/ImagingBBox null>>setpagedevice"
+*PageRegion Envelope10/#10 Envelope: "<</cupsCompression 3/PageSize[297.00 684.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Envelope9/#9 Envelope: "<</cupsCompression 3/PageSize[286.00 639.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Envelope734/US 7 3/4 Envelope: "<</cupsCompression 3/PageSize[279.00 540.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Envelope634/US 6 3/4 Envelope: "<</cupsCompression 3/PageSize[261.00 468.00]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeA2/A2 Baronial: "<</cupsCompression 3/PageSize[315.00 414.00]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeB5/B5 Envelope: "<</cupsCompression 3/PageSize[499.00 708.60]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeC6/C6 Envelope: "<</cupsCompression 3/PageSize[324.40 459.00]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeDL/DL Envelope: "<</cupsCompression 3/PageSize[312.00 623.70]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeChokei3/Chokei 3 Envelope: "<</cupsCompression 3/PageSize[340.20 666.00]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeChokei4/Chokei 4 Envelope: "<</cupsCompression 3/PageSize[255.06 581.40]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeChokei40/Chokei 40 Envelope: "<</cupsCompression 3/PageSize[255.00 637.80]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeKakugata3/Kakugata 3 Envelope: "<</cupsCompression 3/PageSize[612.40 785.20]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeKakugata4/Kakugata 4 Envelope: "<</cupsCompression 3/PageSize[558.50 756.84]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeKakugata5/Kakugata 5 Envelope: "<</cupsCompression 3/PageSize[538.60 680.40]/ImagingBBox null>>setpagedevice"
+*PageRegion EnvelopeKakugata6/Kakugata 6 Envelope: "<</cupsCompression 3/PageSize[459.00 649.20]/ImagingBBox null>>setpagedevice"
+*PageRegion Card3x5/US 3 x 5 Card: "<</cupsCompression 1/PageSize[216.00 360.00]/ImagingBBox null>>setpagedevice"
+*PageRegion CardA6/A6 Card: "<</cupsCompression 1/PageSize[297.60 419.40]/ImagingBBox null>>setpagedevice"
+*PageRegion CardA6BL/A6 Card (Borderless): "<</cupsCompression 101/PageSize[318.80 493.40]/ImagingBBox null>>setpagedevice"
+*PageRegion PostcardHagaki/Hagaki Postcard: "<</cupsCompression 4/PageSize[283.50 419.40]/ImagingBBox null>>setpagedevice"
+*PageRegion PostcardHagakiBL/Hagaki Postcard (Borderless): "<</cupsCompression 104/PageSize[304.70 493.40]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo312x5/US 3 1/2 x 5 Photo: "<</cupsCompression 1/PageSize[251.87 360.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo312x5BL/US 3 1/2 x 5 Photo (Borderless): "<</cupsCompression 101/PageSize[273.07 434.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 4x6/US 4 x 6 in: "<</cupsCompression 11/PageSize[288.00 432.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 4x6BL/US 4 x 6 in (Borderless): "<</cupsCompression 111/PageSize[309.20 506.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 4x8/4 x 8 in: "<</cupsCompression 13/PageSize[288.00 576.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 4x8BL/4 x 8 in (Borderless): "<</cupsCompression 113/PageSize[309.20 650.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo5x7/US 5 x 7 Photo: "<</cupsCompression 1/PageSize[360.00 504.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo5x7BL/US 5 x 7 Photo (Borderless): "<</cupsCompression 101/PageSize[381.20 578.00]/ImagingBBox null>>setpagedevice"
+*PageRegion PhotoL/L Photo: "<</cupsCompression 17/PageSize[252.40 360.00]/ImagingBBox null>>setpagedevice"
+*PageRegion PhotoLBL/L Photo (Borderless): "<</cupsCompression 117/PageSize[273.60 434.00]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo2L/2L Photo: "<</cupsCompression 18/PageSize[360.00 504.60]/ImagingBBox null>>setpagedevice"
+*PageRegion Photo2LBL/2L Photo (Borderless): "<</cupsCompression 118/PageSize[381.20 578.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 10x15cm/10 x 15 cm: "<</cupsCompression 12/PageSize[288.00 433.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 10x15cmBL/10 x 15 cm (Borderless): "<</cupsCompression 112/PageSize[309.20 507.00]/ImagingBBox null>>setpagedevice"
+*PageRegion 13x18cm/13 x 18 cm: "<</cupsCompression 20/PageSize[360.00 505.20]/ImagingBBox null>>setpagedevice"
+*PageRegion 13x18cmBL/13 x 18 cm (Borderless): "<</cupsCompression 120/PageSize[381.20 579.20]/ImagingBBox null>>setpagedevice"
+*PageRegion 10x20cm/10 x 20 cm: "<</cupsCompression 14/PageSize[283.46 566.93]/ImagingBBox null>>setpagedevice"
+*PageRegion 10x20cmBL/10 x 20 cm (Borderless): "<</cupsCompression 14/PageSize[302.66 638.93]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageRegion
+*DefaultImageableArea: Letter
+*ImageableArea Letter/US Letter: "18.00 36.00 594.00 787.20"
+*ImageableArea LetterBL/US Letter (Borderless): "18.00 36.00 632.00 830.00"
+*ImageableArea LetterBA/US Letter (Banner): "18.00 0.00 594.00 7920.00"
+*ImageableArea Legal/US Legal: "18.00 36.00 594.00 1003.20"
+*ImageableArea LegalBL/US Legal (Borderless): "18.00 36.00 630.00 1044.00"
+*ImageableArea Statement/US Statement: "9.60 36.00 386.40 607.20"
+*ImageableArea Executive/US Executive: "9.60 36.00 512.40 751.20"
+*ImageableArea A4/A4: "9.60 36.00 585.60 837.00"
+*ImageableArea A4BL/A4 (Borderless): "9.60 36.00 606.60 879.80"
+*ImageableArea A4BA/A4 (Banner): "9.60 0.00 585.60 8419.00"
+*ImageableArea A5/A5: "9.60 36.00 409.80 590.40"
+*ImageableArea A5BL/A5 (Borderless): "9.60 36.00 431.00 633.20"
+*ImageableArea B5JIS/B5: "9.60 36.00 506.40 723.60"
+*ImageableArea B5JISBL/B5 (Borderless): "9.60 36.00 527.60 766.40"
+*ImageableArea Envelope10/#10 Envelope: "9.60 36.00 292.20 679.20"
+*ImageableArea Envelope9/#9 Envelope: "9.60 36.00 281.20 634.20"
+*ImageableArea Envelope734/US 7 3/4 Envelope: "9.60 36.00 274.20 535.20"
+*ImageableArea Envelope634/US 6 3/4 Envelope: "9.60 36.00 256.20 463.20"
+*ImageableArea EnvelopeA2/A2 Baronial: "9.60 36.00 310.20 409.20"
+*ImageableArea EnvelopeB5/B5 Envelope: "9.60 36.00 494.20 703.80"
+*ImageableArea EnvelopeC6/C6 Envelope: "9.60 36.00 319.60 454.20"
+*ImageableArea EnvelopeDL/DL Envelope: "9.60 36.00 307.20 618.90"
+*ImageableArea EnvelopeChokei3/Chokei 3 Envelope: "9.60 36.00 335.40 661.20"
+*ImageableArea EnvelopeChokei4/Chokei 4 Envelope: "9.60 36.00 250.26 576.60"
+*ImageableArea EnvelopeChokei40/Chokei 40 Envelope: "9.60 36.00 250.20 633.00"
+*ImageableArea EnvelopeKakugata3/Kakugata 3 Envelope: "18.00 36.00 607.60 780.40"
+*ImageableArea EnvelopeKakugata4/Kakugata 4 Envelope: "9.60 36.00 553.70 755.04"
+*ImageableArea EnvelopeKakugata5/Kakugata 5 Envelope: "9.60 36.00 533.80 675.60"
+*ImageableArea EnvelopeKakugata6/Kakugata 6 Envelope: "9.60 36.00 454.20 644.40"
+*ImageableArea Card3x5/US 3 x 5 Card: "9.60 36.00 206.40 355.20"
+*ImageableArea CardA6/A6 Card: "9.60 36.00 288.00 414.60"
+*ImageableArea CardA6BL/A6 Card (Borderless): "9.60 36.00 309.20 457.40"
+*ImageableArea PostcardHagaki/Hagaki Postcard: "9.60 36.00 273.90 414.60"
+*ImageableArea PostcardHagakiBL/Hagaki Postcard (Borderless): "9.60 36.00 295.10 457.40"
+*ImageableArea Photo312x5/US 3 1/2 x 5 Photo: "9.60 36.00 242.27 355.20"
+*ImageableArea Photo312x5BL/US 3 1/2 x 5 Photo (Borderless): "9.60 36.00 263.47 398.00"
+*ImageableArea 4x6/US 4 x 6 in: "9.60 36.00 278.40 427.20"
+*ImageableArea 4x6BL/US 4 x 6 in (Borderless): "9.60 36.00 300.20 470.00"
+*ImageableArea 4x8/4 x 8 in: "9.60 36.00 278.40 571.20"
+*ImageableArea 4x8BL/4 x 8 in (Borderless): "9.60 36.00 299.60 614.00"
+*ImageableArea Photo5x7/US 5 x 7 Photo: "9.60 36.00 350.40 499.20"
+*ImageableArea Photo5x7BL/US 5 x 7 Photo (Borderless): "9.60 36.00 371.60 542.00"
+*ImageableArea PhotoL/L Photo: "9.60 36.00 242.80 355.20"
+*ImageableArea PhotoLBL/L Photo (Borderless): "9.60 36.00 264.00 398.00"
+*ImageableArea Photo2L/2L Photo: "9.60 36.00 350.40 499.80"
+*ImageableArea Photo2LBL/2L Photo (Borderless): "9.60 36.00 371.60 542.00"
+*ImageableArea 10x15cm/10 x 15 cm: "9.60 36.00 278.40 427.20"
+*ImageableArea 10x15cmBL/10 x 15 cm (Borderless): "9.60 36.00 299.60 471.00"
+*ImageableArea 13x18cm/13 x 18 cm: "9.60 36.00 350.40 500.40"
+*ImageableArea 13x18cmBL/13 x 18 cm (Borderless): "9.60 36.00 371.60 543.20"
+*ImageableArea 10x20cm/10 x 20 cm: "9.60 36.00 273.86 562.13"
+*ImageableArea 10x20cmBL/10 x 20 cm (Borderless): "9.60 36.00 293.06 602.93"
+*DefaultPaperDimension: Letter
+*PaperDimension Letter/US Letter: "612.00 792.00"
+*PaperDimension LetterBL/US Letter (Borderless): "650.00 866.00"
+*PaperDimension LetterBA/US Letter (Banner): "612.00 7920.00"
+*PaperDimension Legal/US Legal: "612.00 1008.00"
+*PaperDimension LegalBL/US Legal (Borderless): "648.00 1080.00"
+*PaperDimension Statement/US Statement: "396.00 612.00"
+*PaperDimension Executive/US Executive: "522.00 756.00"
+*PaperDimension A4/A4: "595.20 841.80"
+*PaperDimension A4BL/A4 (Borderless): "616.20 915.80"
+*PaperDimension A4BA/A4 (Banner): "595.20 8419.00"
+*PaperDimension A5/A5: "419.40 595.20"
+*PaperDimension A5BL/A5 (Borderless): "440.60 669.20"
+*PaperDimension B5JIS/B5: "516.00 728.40"
+*PaperDimension B5JISBL/B5 (Borderless): "537.20 802.40"
+*PaperDimension Envelope10/#10 Envelope: "297.00 684.00"
+*PaperDimension Envelope9/#9 Envelope: "286.00 639.00"
+*PaperDimension Envelope734/US 7 3/4 Envelope: "279.00 540.00"
+*PaperDimension Envelope634/US 6 3/4 Envelope: "261.00 468.00"
+*PaperDimension EnvelopeA2/A2 Baronial: "315.00 414.00"
+*PaperDimension EnvelopeB5/B5 Envelope: "499.00 708.60"
+*PaperDimension EnvelopeC6/C6 Envelope: "324.40 459.00"
+*PaperDimension EnvelopeDL/DL Envelope: "312.00 623.70"
+*PaperDimension EnvelopeChokei3/Chokei 3 Envelope: "340.20 666.00"
+*PaperDimension EnvelopeChokei4/Chokei 4 Envelope: "255.06 581.40"
+*PaperDimension EnvelopeChokei40/Chokei 40 Envelope: "255.00 637.80"
+*PaperDimension EnvelopeKakugata3/Kakugata 3 Envelope: "612.40 785.20"
+*PaperDimension EnvelopeKakugata4/Kakugata 4 Envelope: "558.50 756.84"
+*PaperDimension EnvelopeKakugata5/Kakugata 5 Envelope: "538.60 680.40"
+*PaperDimension EnvelopeKakugata6/Kakugata 6 Envelope: "459.00 649.20"
+*PaperDimension Card3x5/US 3 x 5 Card: "216.00 360.00"
+*PaperDimension CardA6/A6 Card: "297.60 419.40"
+*PaperDimension CardA6BL/A6 Card (Borderless): "318.80 493.40"
+*PaperDimension PostcardHagaki/Hagaki Postcard: "283.50 419.40"
+*PaperDimension PostcardHagakiBL/Hagaki Postcard (Borderless): "304.70 493.40"
+*PaperDimension Photo312x5/US 3 1/2 x 5 Photo: "251.87 360.00"
+*PaperDimension Photo312x5BL/US 3 1/2 x 5 Photo (Borderless): "273.07 434.00"
+*PaperDimension 4x6/US 4 x 6 in: "288.00 432.00"
+*PaperDimension 4x6BL/US 4 x 6 in (Borderless): "309.20 506.00"
+*PaperDimension 4x8/4 x 8 in: "288.00 576.00"
+*PaperDimension 4x8BL/4 x 8 in (Borderless): "309.20 650.00"
+*PaperDimension Photo5x7/US 5 x 7 Photo: "360.00 504.00"
+*PaperDimension Photo5x7BL/US 5 x 7 Photo (Borderless): "381.20 578.00"
+*PaperDimension PhotoL/L Photo: "252.40 360.00"
+*PaperDimension PhotoLBL/L Photo (Borderless): "273.60 434.00"
+*PaperDimension Photo2L/2L Photo: "360.00 504.60"
+*PaperDimension Photo2LBL/2L Photo (Borderless): "381.20 578.00"
+*PaperDimension 10x15cm/10 x 15 cm: "288.00 433.00"
+*PaperDimension 10x15cmBL/10 x 15 cm (Borderless): "309.20 507.00"
+*PaperDimension 13x18cm/13 x 18 cm: "360.00 505.20"
+*PaperDimension 13x18cmBL/13 x 18 cm (Borderless): "381.20 579.20"
+*PaperDimension 10x20cm/10 x 20 cm: "283.46 566.93"
+*PaperDimension 10x20cmBL/10 x 20 cm (Borderless): "302.66 638.93"
+*MaxMediaWidth: "612.00"
+*MaxMediaHeight: "1224.00"
+*HWMargins: 0.00 0.00 0.00 0.00
+*CustomPageSize True: "pop pop pop <</PageSize[5 -2 roll]/ImagingBBox null>>setpagedevice"
+*ParamCustomPageSize Width: 1 points 216.00 612.00
+*ParamCustomPageSize Height: 2 points 360.00 1224.00
+*ParamCustomPageSize WidthOffset: 3 points 0 0
+*ParamCustomPageSize HeightOffset: 4 points 0 0
+*ParamCustomPageSize Orientation: 5 int 0 0
+*OpenUI *MediaType/Paper Type: PickOne
+*OrderDependency: 10.0 AnySetup *MediaType
+*DefaultMediaType: Plain
+*MediaType Plain/Plain Paper: "<</cupsMediaType 1>>setpagedevice"
+*MediaType HeavyWeightMatte/Heavy Weight Matte: "<</cupsMediaType 2>>setpagedevice"
+*MediaType Glossy/Photo/Glossy: "<</cupsMediaType 3>>setpagedevice"
+*MediaType Transparency: "<</cupsMediaType 4>>setpagedevice"
+*MediaType CardStock/Card Stock: "<</cupsMediaType 6>>setpagedevice"
+*MediaType IronOn/Iron-On Transfer: "<</cupsMediaType 5>>setpagedevice"
+*CloseUI: *MediaType
+*OpenUI *PrintQuality/Print Quality: PickOne
+*OrderDependency: 20.0 AnySetup *PrintQuality
+*DefaultPrintQuality: Normal
+*PrintQuality Draft/Quick Print: "<</HWResolution[300 300]/OutputType (1)>>setpagedevice"
+*PrintQuality Normal: "<</HWResolution[600 600]/OutputType (2)>>setpagedevice"
+*PrintQuality Best/Photo: "<</HWResolution[600 600]/OutputType (4)>>setpagedevice"
+*CloseUI: *PrintQuality
+*OpenUI *ColorModel/Document Color: PickOne
+*OrderDependency: 30.0 AnySetup *ColorModel
+*DefaultColorModel: Color
+*ColorModel Color: "<</cupsColorOrder 0/cupsColorSpace 1/cupsBitsPerColor 8/cupsRowCount 0>>setpagedevice"
+*ColorModel Grayscale: "<</cupsColorOrder 0/cupsColorSpace 1/cupsBitsPerColor 8/cupsRowCount 1>>setpagedevice"
+*CloseUI: *ColorModel
+*OpenUI *Sharpening/Image Sharpening: PickOne
+*OrderDependency: 40.0 DocumentSetup *Sharpening
+*DefaultSharpening: Automatic
+*Sharpening Automatic/Automatic Image Sharpening: "<</>>setpagedevice"
+*Sharpening 0/None: "<</>>setpagedevice"
+*Sharpening 1/1 : "<</>>setpagedevice"
+*Sharpening 2/2 : "<</>>setpagedevice"
+*Sharpening 3/3 : "<</>>setpagedevice"
+*Sharpening 4/4 : "<</>>setpagedevice"
+*Sharpening 5/5 : "<</>>setpagedevice"
+*Sharpening 6/6 : "<</>>setpagedevice"
+*Sharpening 7/7 : "<</>>setpagedevice"
+*Sharpening 8/8 : "<</>>setpagedevice"
+*Sharpening 9/9 : "<</>>setpagedevice"
+*Sharpening 10/Most: "<</>>setpagedevice"
+*CloseUI: *Sharpening
+*OpenUI *PrintMirror/Mirror: Boolean
+*OrderDependency: 50.0 DocumentSetup *PrintMirror
+*DefaultPrintMirror: False
+*PrintMirror True/On: "<</cupsRowStep 2>>setpagedevice"
+*PrintMirror False/Off: "<</cupsRowStep 1>>setpagedevice"
+*CloseUI: *PrintMirror
+*DefaultFont: Courier
+*Font AvantGarde-Book: Standard "(1.05)" Standard ROM
+*Font AvantGarde-BookOblique: Standard "(1.05)" Standard ROM
+*Font AvantGarde-Demi: Standard "(1.05)" Standard ROM
+*Font AvantGarde-DemiOblique: Standard "(1.05)" Standard ROM
+*Font Bookman-Demi: Standard "(1.05)" Standard ROM
+*Font Bookman-DemiItalic: Standard "(1.05)" Standard ROM
+*Font Bookman-Light: Standard "(1.05)" Standard ROM
+*Font Bookman-LightItalic: Standard "(1.05)" Standard ROM
+*Font Courier: Standard "(1.05)" Standard ROM
+*Font Courier-Bold: Standard "(1.05)" Standard ROM
+*Font Courier-BoldOblique: Standard "(1.05)" Standard ROM
+*Font Courier-Oblique: Standard "(1.05)" Standard ROM
+*Font Helvetica: Standard "(1.05)" Standard ROM
+*Font Helvetica-Bold: Standard "(1.05)" Standard ROM
+*Font Helvetica-BoldOblique: Standard "(1.05)" Standard ROM
+*Font Helvetica-Narrow: Standard "(1.05)" Standard ROM
+*Font Helvetica-Narrow-Bold: Standard "(1.05)" Standard ROM
+*Font Helvetica-Narrow-BoldOblique: Standard "(1.05)" Standard ROM
+*Font Helvetica-Narrow-Oblique: Standard "(1.05)" Standard ROM
+*Font Helvetica-Oblique: Standard "(1.05)" Standard ROM
+*Font NewCenturySchlbk-Bold: Standard "(1.05)" Standard ROM
+*Font NewCenturySchlbk-BoldItalic: Standard "(1.05)" Standard ROM
+*Font NewCenturySchlbk-Italic: Standard "(1.05)" Standard ROM
+*Font NewCenturySchlbk-Roman: Standard "(1.05)" Standard ROM
+*Font Palatino-Bold: Standard "(1.05)" Standard ROM
+*Font Palatino-BoldItalic: Standard "(1.05)" Standard ROM
+*Font Palatino-Italic: Standard "(1.05)" Standard ROM
+*Font Palatino-Roman: Standard "(1.05)" Standard ROM
+*Font Symbol: Special "(001.005)" Special ROM
+*Font Times-Bold: Standard "(1.05)" Standard ROM
+*Font Times-BoldItalic: Standard "(1.05)" Standard ROM
+*Font Times-Italic: Standard "(1.05)" Standard ROM
+*Font Times-Roman: Standard "(1.05)" Standard ROM
+*Font ZapfChancery-MediumItalic: Standard "(1.05)" Standard ROM
+*Font ZapfDingbats: Special "(001.005)" Special ROM
+*% End of lx2600.ppd, 24752 bytes.

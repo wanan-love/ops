@@ -10,6 +10,11 @@ import { emptyReport, supportedCap } from './merge'
  * 可用 @PJL INFO 类命令回读状态/耗材。@PJL INFO STATUS 为 HP PJL 参考手册标准；
  * @PJL INFO SUPPLY 为 Brother 风格试点格式（公开资料未完全标准化，真实机型需抓包适配）。
  *
+ * 官方驱动实证（P8，docs/vendor-evidence/MULTI_BRAND_DRIVERS_ANALYSIS.md）：
+ *   - Brother 官方驱动 rawtobr3 输出完整 PJL 流（UEL + @PJL JOB/EOJ/SET，含 OUTBIN）——PJL 语言层使用官方背书；
+ *   - HP HPLIP hpmud 源码端口表含 9100/9101/9102 打印通道；Canon libcnbpnet30 存在 Cnmpu2_port9100 通道类；
+ *   - 上述均为打印数据通道证据；@PJL INFO 回读的机型响应格式仍需真机验证（保持试点声明）。
+ *
  * 探测语义（能力三态红线）：
  *   - 连接失败/超时/无响应 → ok=false 仅记 probe（不猜测、不影响其它来源）
  *   - CODE 无法映射 → status=null（detail 保留原始 CODE）
