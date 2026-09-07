@@ -552,3 +552,27 @@ Stage Summary:
 - 项目状态：稳定（21/21、lint 0、双视口零溢出、零 console error、零残留、CI 预期绿）
 - 已知风险/未验证：①cron 平台执行配额恢复时间未知（任务已注册，恢复后自动迭代）；②DeviceCapabilities 真机行为（DC_DUPLEX 双解释映射命中率、Add-Type 首次编译开销、NULL 端口重试覆盖面）待 Windows 硬件；③场景 21 的 devMode=true 断言仅开发模式（正式模式 403 已由路由层保证）
 - 下一阶段优先建议（VENDOR_RESEARCH.md §5 证据强度）：①P6 HP-LASERJET-COMMON-MIB 适配器（维修件计数，第二个 Vendor Adapter）②Brother PJL SUPPLY 真机抓包（无真机不宣称）③扫描亮度/对比度 eSCL 透传④Android/iOS 原生化⑤真实硬件验证轮
+
+---
+Task ID: P6
+Agent: main-agent
+Task: 用户指定 Epson 官方驱动逆向（epson.com.cn UOS 驱动页）→ 提取官方真实能力 → 修正项目中猜测能力 → 重新审查迭代任务
+
+Work Log:
+- 【驱动获取】epson.com.cn 驱动页（drive.js 分析：真实下载端点 /api/Service/downloadFile?driveId&productId）→ 官方包 signed_epson-inkjet-printer-escpr_1.7.9_amd64.deb（219KB，适用 L4353/L4358/L4356/L4359）
+- 【逆向】dpkg-deb -R 解包：CUPS 过滤器 ELF×2 + libescpr.so.1.0.0 + 48 型号 PPD；L4350 PPD 全 OpenUI 审计（MediaType 9 项 / OutputMode 720·360 两档 / Duplex 长短边 / PageSize 12 型+无边距+自定义 / Brightness·Contrast·Saturation ±25 / 无 InputSlot / 无 OutputBin / cupsManualCopies）；跨型号对比（WF-6590 有 3 InputSlot；M2120/L3150/L805 无 Duplex → 能力逐型号声明，按品牌推断必错）
+- 【libescpr 符号逆向】nm -D：epsGetSupplyInfo/epsGetInkInfo/epsGetStatus/epsMakeMainteCmd/epsGetSupportedMedia/epsFindPrinter 等官方能力 API；objdump：rawGetDefautiPort=0x238C→TCP 9100（3 处）；strings：snmp* 全套 + community public（UDP 161）+ @EJL 1284.4 会话；无公开头文件/ABI（诚实声明）
+- 【对照审查】Explore 子代理全项目扫描：代码层零 Epson 品牌猜测（三态红线贯彻）；文档层 2 处弱证据断言 + 2 处代码级小瑕疵（ipp/capabilities.ts:81 `?? 600` 猜测兜底；printers-view Chip 展示钳制默认值有误读风险）
+- 【修正】①ipp/capabilities.ts：printer-resolution-supported 解析失败→UNKNOWN 不猜测，1setOf 集合取最大 dpi（新增 attrResolutions）②printers-view.tsx：UNKNOWN 轴 Chip 显「XX：未确认」虚线+tooltip（capUnknown 助手，Chip 增 muted/title props）③VENDOR_PROTOCOLS.md Epson 行/§5 表改实证口径 ④VENDOR_RESEARCH.md Epson 行证据级低→中、「暂不可做」→「可研究需真机」、§5 新增 Epson libescpr 适配器候选（第二优先级）
+- 【证据归档】docs/vendor-evidence/：原 deb + L4350 PPD + EPSON_ESCPR_ANALYSIS.md（完整逆向报告：PPD 能力面/缺失面、libescpr API、传输通道、修正清单、下一步结论「不新增能力宣称、无真机不开发 ESC/P-R 状态通道」）
+- 【验收】版本 v0.4.3→0.4.4（host package+core/types+前端 OPS_VERSION+README badge/roadmap #18）；lint 0 错误；bun build 通过；host 重启（发现：直接 bun --watch 缺 OPS_DEV_MODE → 须用 bun run dev；pkill 后外层 supervisor 不再自动拉起，(setsid …&) 跨命令存活）→ 全量自测 21/21（tr-mtqj5cj9-6577）零残留
+- 【agent-browser :81 QA】概览 v0.4.4+运行时检测信号；导入 vipp-basic（import API key 字段）→ refresh → duplex/consumables/paperTrays 全 UNKNOWN；打印机卡片 Chip「双面：未确认」（其余 supported 轴显真实值 60ppm/600dpi/A4/Letter）；能力报告 8 轴三态全对；393px/1280px 双视口零溢出；零 console error；footer 自然下推；API 行为核对（client scope 只列 shared 属设计）；手动测试打印机清理（2 台 ipp 删除→恢复 3 台种子态）
+- 【发布】git rebase（本地/远端 P5 双提交内容同树仅 mode 差异→add -A continue）→ push main 906216e（13 文件 +3441/-20）
+
+Stage Summary:
+- 交付：Epson 官方驱动完整逆向证据链（PPD 逐型号 + libescpr 符号 + 端口反汇编）归档入库；项目能力真实性再收紧（IPP 分辨率去猜测兜底 + UNKNOWN Chip「未确认」展示）；厂商文档从「无据推断」升级为「实证口径」；v0.4.4 发布推送
+- 核心结论：官方驱动证明「能力逐型号声明」——L4350 双面长短边/720dpi 上限/无纸盒轴，M2120/L3150/L805 无双面 → 项目三态架构被官方证据正面验证；Epson 墨量官方库 API 存在（epsGetSupplyInfo 经 9100+SNMP）但无公开 ABI → 升级为可研究候选（第二优先级，无真机不开发）
+- 项目状态：稳定（21/21、lint 0、双视口零溢出、零 console error、零残留、CI 预期绿）
+- 运维备忘：ops-host 必须以 `bun run dev` 启动（package.json dev 脚本含 OPS_DEV_MODE=1）；后台启动用 `(setsid bun run dev >> host.log 2>&1 < /dev/null &)` 才能跨命令存活
+- 已知风险/未验证：①libescpr 私有 ABI 需真机抓包（无真机不宣称）②DeviceCapabilities 真机行为仍待 Windows 硬件 ③下一阶段建议（VENDOR_RESEARCH §5 顺序）：HP-LASERJET-COMMON-MIB 适配器 → Lexmark MIB → Epson libescpr 真机 → Brother PJL SUPPLY 真机
+- cron「任务审查与持续迭代」任务 364017 持续有效（上一轮建立）
