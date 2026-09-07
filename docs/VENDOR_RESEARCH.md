@@ -16,7 +16,7 @@
 | **CUPS/IPP 能实现什么？** | CUPS：lpstat 枚举 + IPP localhost:631 Get-Printer-Attributes 全套（media-supported/sides-supported/copies-supported/printer-state-reasons/marker-levels?）；IPP 直连：RFC 8010/8011 自研栈已支持 + ipps TLS。IPP `marker-levels` 属**可选属性**——很多机型不返回，必须 UNKNOWN 容忍 |
 | **厂商驱动额外实现了什么？** | 官方驱动比标准协议多的是：墨量精确图形界面（私有双向通道）、维修件计数、纸盒明细、色彩管理。通道 = 厂商私有 SNMP MIB（HP/Lexmark 公开可下载；Ricoh NDA；Kyocera/KM 不公开）、PJL INFO 扩展（HP 发明、Brother 变体）、私有 HTTP/EWS |
 | **哪些功能目前可靠可做？** | ① SNMP RFC 3805（已实现）② PJL INFO STATUS（已实现；SUPPLY 需真机抓包）③ IPP 属性（已实现）④ Windows WMI（已实现）⑤ HP-LASERJET-COMMON-MIB / LEXMARK-MIB 厂商适配（公开 MIB，证据充分，可作下两个 Vendor Adapter）⑥ Windows DeviceCapabilities API（微软官方 API，驱动级真实能力） |
-| **哪些功能暂时不能做及原因？** | Ricoh 私有 MIB（官网 NDA 下载）；Kyocera KMnetViewer / Konica Minolta PageScope 私有 MIB（未公开）；WMI 本地打印机墨量（无标准字段）；打印速度 ppm（所有标准通道均无真实字段）。**Epson 消费级墨量**：官方驱动逆向（ESC/P-R 1.7.9 libescpr）实证墨量 API 存在（`epsGetSupplyInfo`/`epsGetInkInfo`）但无公开 ABI——从「不可做」升级为「可研究但需真机」 |
+| **哪些功能暂时不能做及原因？** | Ricoh 私有 MIB（官网 NDA 下载）；Kyocera KMnetViewer / Konica Minolta PageScope 私有 MIB（未公开）；WMI 本地打印机墨量（无标准字段）；打印速度 ppm（所有标准通道均无真实字段）。**Epson 消费级墨量（代际拆分，P7 双逆向）**：新代（L4350 等）官方驱动逆向（escpr 1.7.9 libescpr）实证墨量 API 存在（`epsGetSupplyInfo`/`epsGetInkInfo`）但无公开 ABI——「可研究但需真机」；**老代低端（L130…L455，201401w 驱动）官方库零状态 API 零网络栈——Linux 侧官方自身不提供任何读取通道，IPP/SNMP 读不到即 UNKNOWN 终态** |
 
 ---
 
@@ -59,7 +59,7 @@
 |---|---|---|---|---|
 | **HP** | JetDirect 私有 SNMP 分支（HP-LASERJET-COMMON-MIB 等，企业 OID 11）；PJL（发明者，官方文档最全）；UPD 驱动 | **高**（MIB 文件可从 mibs.observium.org / HP 官网获取；PJL 官方文档 developers.hp.com） | HP 社区帖（SNMP 墨量实证 + 残缺机型实证）；HP-LASERJET-COMMON-MIB 在线浏览 | ✅ **可靠可做**：P4 PJL 已实现；HP 私有 MIB 适配器是下一个最佳候选（页计数/维修件增强） |
 | **Canon** | imageRUNNER SNMP MIB（Canon 门户）；桌面机型走驱动双向 | **中低**（imageRUNNER MIB 需门户获取，社区 thwack 求而难得；imageCLASS 消费级无公开） | Canon 官方手册「Monitoring and Controlling via SNMP」章节 | ⚠️ **部分可做**：标准 RFC 3805 通道覆盖网络机型；私有 MIB 暂不做（获取渠道不稳定） |
-| **Epson** | Status Monitor 3（ESC/I 私有双向协议，USB）；EpsonNet（网络）；**官方 Linux/UOS 驱动核心库 libescpr（逆向实证，2025-09 P6）**：网络通道 TCP 9100（`rawGetDefautiPort`=0x238C）+ SNMP 161（community `public`）+ `@EJL 1284.4` 会话；导出墨量/状态/维护 API（`epsGetSupplyInfo`/`epsGetInkInfo`/`epsGetStatus`/`epsMakeMainteCmd`） | **中**（驱动 deb 官方可下：epson.com.cn 驱动页；libescpr 无公开头文件/ABI 文档，但符号与通道反汇编实证；PPD 逐型号能力声明完整） | 驱动包逆向（`docs/vendor-evidence/EPSON_ESCPR_ANALYSIS.md`：48 PPD + libescpr 符号表 + 反汇编） | ⚠️ **可研究（证据升级）**：标准 IPP/SNMP 通道照常覆盖；libescpr 私有墨量通道列为 Vendor Adapter 第二优先级候选（排 HP/Lexmark 公开 MIB 之后）——**无真机抓包不开发、不宣称**；L4350 PPD 逐型号能力声明（双面长/短边、720dpi、无 InputSlot）可直接校验三态架构 |
+| **Epson** | Status Monitor 3（ESC/I 私有双向协议，USB）；EpsonNet（网络）；**官方 Linux/UOS 驱动核心库双代逆向（P6+P7）**：①新代 libescpr（escpr 1.7.9，L4350 系等 48 型）：网络通道 TCP 9100（`rawGetDefautiPort`=0x238C）+ SNMP 161（community `public`）+ `@EJL 1284.4` 会话，导出墨量/状态/维护 API（`epsGetSupplyInfo`/`epsGetInkInfo`/`epsGetStatus`/`epsMakeMainteCmd`）；②**老代低端 libEpson_201401w（201401w 1.0.0，L130…L455 十二型）：零 socket 导入、零状态 API（仅打印管线 EPC_/JFK_/半色调），代际断崖实证** | **中**（两个驱动 deb 均官方可下：epson.com.cn 驱动页；libescpr 无公开头文件/ABI 文档，但符号与通道反汇编实证；PPD 逐型号能力声明完整） | 驱动包逆向双报告（`docs/vendor-evidence/EPSON_ESCPR_ANALYSIS.md`：48 PPD + libescpr 符号表 + 反汇编；`EPSON_201401W_ANALYSIS.md`：12 PPD 全量交叉审计 + 老代库零网络/零状态结论） | ⚠️ **可研究（作用域限定新代）**：标准 IPP/SNMP 通道照常覆盖；libescpr 私有墨量通道列为 Vendor Adapter 第二优先级候选（排 HP/Lexmark 公开 MIB 之后，**仅覆盖新代机型**）——**无真机抓包不开发、不宣称**；**老代 L 系列（L130/L220/L310/L360/L365/L455 等）耗材 IPP/SNMP 读不到即 UNKNOWN 终态（官方能力边界）**；双数据点（P6 同代跨型号差异 + P7 跨代际断崖）二次正交验证「能力逐型号声明」——L4350 双面长短边/720dpi/无 InputSlot vs 老代 12 型全无双面/无 InputSlot/有 Borderless/16 纸型/分辨率绑介质 |
 | **Brother** | PJL INFO SUPPLY 变体（「隐藏 OEM 命令」）；私有 OID | **中**（社区逆向散落：Kapua 博客/PRET 工具/serverfault 求 OID 帖） | Kapua 博客（toner levels 需 trawl 互联网找 OEM 命令）；serverfault Brother 9460 帖 | ⚠️ **试点已做、需真机抓包**：P4 的 SUPPLY 解析即 Brother 风格试点；无真机验证前**不得**宣称支持 |
 | **Xerox** | CentreWare EWS；MIB 文件 | **中**（Home Assistant 社区实证标准 SNMP 四色碳粉+页计数可读；私有 MIB 分散） | HA 社区帖（SNMP 全部四色 OK）；PRTG KB（用户自寻 MIB） | ✅ **标准通道可靠**；私有增强暂不做 |
 | **Ricoh** | 私有 MIB（官网 RiDP 门户 **NDA 下载**） | **低**（需签 NDA） | Reddit sysadmin 帖（明示 NDA 流程） | ❌ **不可做**（合规边界：NDA 代码不能进开源项目）；标准 RFC 3805 通道照常覆盖 |
@@ -102,7 +102,7 @@
 2. **HP 私有 MIB 适配器**（HP-LASERJET-COMMON-MIB 公开）——维修件计数/页计数/纸盒增强，第二个 Vendor Adapter。
 3. **Lexmark MIB 适配器**（官方文档 + LEXMARK-MPS-MIB 公开）——同上并列。
 4. **Brother PJL SUPPLY 真机抓包适配**——需要真机（当前无，保持试点声明）。
-5. **Epson libescpr 状态通道适配器**（证据已升级：官方 UOS 驱动逆向实证 9100+SNMP 双通道与墨量 API 存在）——第二优先级候选，**需真机抓包定 ABI，无真机不开发**。
+5. **Epson libescpr 状态通道适配器（作用域仅新代机型）**（证据已升级：官方 UOS 驱动逆向实证 9100+SNMP 双通道与墨量 API 存在；P7 二次逆向划定边界——老代 201401w 库零 socket/零状态 API，适配器对老代 L 系列无效，老代耗材只有 IPP/SNMP 两条标准通道）——第二优先级候选，**需真机抓包定 ABI，无真机不开发**。
 6. **不做**：Ricoh NDA MIB、Kyocera/KM 私有接口、任何 EWS 网页抓取（脆弱且非契约）。
 
 ---
@@ -116,4 +116,5 @@
 - Lexmark support「SNMP MIB and OID Values Explained」；mibs.observium.org（HP-LASERJET-COMMON-MIB / LEXMARK-MPS-MIB / Printer-MIB 浏览）
 - HP 社区（h30434.www3.hp.com：SNMP 墨量实证与 4301 缺失实证）；Canon 官方手册（SNMP 监控章节）；Epson 官方（Status Monitor 3 文档）
 - **Epson 官方驱动逆向（P6，2025-09）**：`signed_epson-inkjet-printer-escpr_1.7.9_amd64.deb`（epson.com.cn 驱动页下载）→ PPD 逐型号能力声明 + libescpr 导出符号（`nm -D`）+ 端口反汇编（`objdump` rawGetDefautiPort=0x238C）；证据归档 `docs/vendor-evidence/`（EPSON_ESCPR_ANALYSIS.md + 原 deb + L4350 PPD）
+- **Epson 官方驱动逆向（P7 第二轮，2025-09，低端机型）**：`epson-inkjet-printer-201401w_1.0.0_amd64.deb`（同页系下载，适用 L130/L220/L310/L360/L365/L455 等）→ 12 PPD 全量交叉审计（无 Duplex/无 InputSlot/有 Borderless/16 纸型/4 介质/分辨率绑介质 360·720）+ 老代核心库逆向（零 socket 导入、零 epsGet* 状态 API、资源签名校验机制）；证据归档 `docs/vendor-evidence/`（EPSON_201401W_ANALYSIS.md + 原 deb + L360 PPD）——与新代形成**代际断崖**对照，划定 libescpr 适配器作用域
 - 社区实证：serverfault（页计数/Brother OID）、Reddit sysadmin（Ricoh NDA 流程）、Home Assistant（Xerox 四色实证）、Kapua 博客（Brother PJL SUPPLY）、RUB-NDS PRET（PJL 工具实现）
