@@ -709,3 +709,27 @@ Stage Summary:
 - Android debug-signed APK 可安装可用，正式签名密钥待用户配置 secrets（ANDROID_KEYSTORE_BASE64 等）后升级 assembleRelease
 - iOS 工程内部 MARKETING_VERSION 未与 Host 同源（pbxproj 手改风险大于收益，暂不处理，记录在案）
 - 下一阶段：VENDOR_RESEARCH §5 顺序推进 HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB；或按 cron 轮自主判断
+
+---
+Task ID: P9.2-发布结果（补充）
+Agent: main-agent
+Task: v0.4.8 发布监控结论 + 二轮磁盘修复验证
+
+Work Log:
+- 首轮 tag v0.4.8（b5ff521）：四平台 job（android/linux/ios/windows）全绿 + docker ghcr 成功——wrapper/iOS zip/Windows MSI 修复全部实证有效；唯 build-macos 失败（hdiutil: No space left on device，arm64 dmg 成功后 x64 爆盘）
+- 磁盘修复三项：macOS job 回收 .next + 主项目 node_modules（host 编译仅需自身依赖+嵌入清单）；build-macos.sh 消除 .app STAGE 双份拷贝（-140MB/架构）+ hdiutil 环境性失败降级 warn；macOS .app 目录树打单 zip 上传（同 iOS 策略，修复 Release flatten 平铺污染）
+- tag 处理：删除远程/本地 v0.4.8 重打（Release 对象从未创建，无残留），二轮指向 8e645ae；main 历史经 reset --soft 整理为 3bf24db
+- 二轮结果：release-build + docker 双绿（run 34248232922/34248232681）
+- **GitHub Release v0.4.8 正式发布：16 产物**——Android universal APK 5.6MB · iOS xcarchive.zip 单文件 · Linux x64/arm64 二进制 80.7MB + deb ×2 · macOS 双架构二进制 + .app.zip ×2 + dmg ×2（磁盘修复后双 dmg 全成功）· Windows exe 85.3MB + msi 33.1MB + zip；全部单文件无平铺污染
+- Linux AppImage 未产出：CI runner FUSE 限制（appimagetool extract-and-run 仍失败）→ 按设计 warn 跳过，Linux 用户由二进制 + deb 覆盖；后续可换 AppImage 官方 action/独立方案
+- 顺手修复（下个版本生效）：release flatten 排除 .wixpdb（WiX 调试符号文件不应进 Release 附件）
+
+Stage Summary:
+- v0.4.8 发布闭环完成：审查 → 3 个 P0 修复 → 本地演练 → 验收 → 首轮发布 → 磁盘故障定位修复 → 二轮全绿 → 16 产物挂载 Release
+- 发布基础设施从此可用：打 v* tag 即产出五平台 16+ 产物 + ghcr 镜像；已知边界：AppImage（FUSE）、Android 正式签名（无 keystore secrets）、iOS ipa（无 Apple 证书）
+
+未解决问题或风险与下一阶段优先建议：
+- Android APK 为 debug 签名（可安装可用；正式签名待 secrets：ANDROID_KEYSTORE_BASE64/STORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD + workflow assembleRelease 切换）
+- iOS 产物为 xcarchive.zip（开发者侧 Xcode 再签名；正式 ipa 待 Apple 开发者证书 secrets）
+- macOS .dmg 未公证（Gatekeeper 首次运行需右键打开；Apple notarytool 待证书）
+- 下一阶段：VENDOR_RESEARCH §5 → HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB；真机验证清单见 README checklist 13

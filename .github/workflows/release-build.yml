@@ -200,7 +200,8 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release
-          find dist-artifacts -type f ! -name "*.yml" -exec cp {} release/ \;
+          # 排除 .yml（workflow 元数据）与 .wixpdb（WiX 调试符号文件，非分发产物）
+          find dist-artifacts -type f ! -name "*.yml" ! -name "*.wixpdb" -exec cp {} release/ \;
           ls -lh release/
 
       - uses: softprops/action-gh-release@v2
