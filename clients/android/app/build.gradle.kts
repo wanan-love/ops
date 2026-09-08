@@ -11,9 +11,11 @@ android {
         applicationId = "io.github.wananlove.openprintshare"
         minSdk = 24
         targetSdk = 34
-        // 版本号与 Host 单一来源（scripts/build-android.sh 会按 dist 命名注入 OpenPrintShare-Android-arm64-{version}.apk）
-        versionCode = 3
-        versionName = "0.3.0"
+        // 版本号与 Host 单一来源：CI / scripts/build-android.sh 通过 -PopsVersion=<host版本>
+        // 注入（mini-services/ops-host/src/core/types.ts OPS_VERSION）；缺省回落 0.3.0（本地 IDE 调试）
+        // versionCode 由 opsVersionCode 注入（major*10000+minor*100+patch，如 0.4.8 → 408）
+        versionCode = (project.findProperty("opsVersionCode") as String?)?.toInt() ?: 3
+        versionName = (project.findProperty("opsVersion") as String?) ?: "0.3.0"
     }
 
     buildTypes {
