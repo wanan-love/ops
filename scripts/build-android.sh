@@ -2,14 +2,14 @@
 # build-android.sh — Android 客户端 APK 构建
 # 依赖：JDK 17 + Android SDK（含 build-tools/platforms 34）
 #  本地无 SDK 时：跳过并提示（CI 由 .github/workflows/release-build.yml 构建）
-#  产物：dist/android/OpenPrintShare-Android-arm64-<version>.apk（universal → arm64 为主，v8a
-#        兼容现代设备；CI 同时产出 universal）
+#  产物：dist/android/OpenPrintShare-Android-universal-<version>.apk（无 abi splits → universal，
+#        debug 签名可直接安装；正式签名密钥由后续 secrets 注入升级）
 set -euo pipefail
 source "$(dirname "$0")/build-common.sh"
 
 ANDROID_DIR="$OPS_ROOT/clients/android"
 OUT_DIR="$DIST/android"
-APK_NAME="$(out_name Android arm64 .apk)"
+APK_NAME="$(out_name Android universal .apk)"
 
 [ -d "$ANDROID_DIR" ] || fail "Android 工程缺失：$ANDROID_DIR"
 
@@ -24,7 +24,7 @@ if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
   cat <<EOF
     1) 安装 Android Studio（或 cmdline-tools）与 JDK 17
     2) echo "sdk.dir=/path/to/Android/sdk" > clients/android/local.properties
-    3) cd clients/android && gradle assembleRelease --no-daemon
+    3) cd clients/android && ./gradlew assembleRelease --no-daemon
     4) cp app/build/outputs/apk/release/app-release-unsigned.apk dist/android/$APK_NAME
 EOF
   mkdir -p "$OUT_DIR"
@@ -37,11 +37,20 @@ if [ ! -f local.properties ]; then
   echo "sdk.dir=$SDK" > local.properties
 fi
 
-# wrapper（无 gradle-wrapper.jar 时用系统 gradle）
-if command -v gradle >/dev/null; then
-  gradle assembleRelease --no-daemon
+# 版本单一来源注入（types.ts OPS_VERSION → -PopsVersion/-PopsVersionCode）
+VER_MAJOR="$(echo "$VERSION" | cut -d. -f1)"
+VER_MINOR="$(echo "$VERSION" | cut -d. -f2)"
+VER_PATCH="$(echo "$VERSION" | cut -d. -f3)"
+VER_CODE=$(( VER_MAJOR * 10000 + VER_MINOR * 100 + VER_PATCH ))
+GRADLE_ARGS=(--no-daemon -PopsVersion="$VERSION" -PopsVersionCode="$VER_CODE")
+
+# wrapper 优先（仓库自带 gradle-8.7 wrapper；CI 同样用 ./gradlew，不依赖全局 gradle）
+if [ -x ./gradlew ]; then
+  ./gradlew assembleRelease "${GRADLE_ARGS[@]}"
+elif command -v gradle >/dev/null; then
+  gradle assembleRelease "${GRADLE_ARGS[@]}"
 else
-  fail "需要 gradle ≥ 8.7（或 Android Studio 内置 Gradle）"
+  fail "需要 gradle ≥ 8.7（或仓库 wrapper：gradlew + JDK17）"
 fi
 
 mkdir -p "$OUT_DIR"

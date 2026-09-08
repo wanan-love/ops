@@ -123,17 +123,23 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
-      - name: Build APK (debug-signed universal)
+      # 仓库自带 gradle-8.7 wrapper（gradlew + jar）：不依赖 runner 全局 gradle（ubuntu 镜像未预装）
+      # 版本单一来源：types.ts OPS_VERSION → -PopsVersion / -PopsVersionCode（major*10000+minor*100+patch）
+      # 产物策略：assembleDebug（debug-signed universal，可直接安装；正式签名后续 secrets 升级）
+      - name: Build APK (debug-signed universal, version from Host)
         working-directory: clients/android
         run: |
-          gradle assembleRelease --no-daemon -Pandroid.injected.signing.store.file=$RUNNER_TEMP/keystore 2>/dev/null || gradle assembleDebug --no-daemon
+          VERSION=$(grep -oP "OPS_VERSION = '\K[^']+" ../../mini-services/ops-host/src/core/types.ts | head -1)
+          CODE=$(echo "$VERSION" | awk -F. '{printf "%d", $1*10000+$2*100+$3}')
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon -PopsVersion="$VERSION" -PopsVersionCode="$CODE"
 
       - name: Collect APK
         shell: bash
         run: |
           VERSION=$(grep -oP "OPS_VERSION = '\K[^']+" mini-services/ops-host/src/core/types.ts | head -1)
           mkdir -p dist/android
-          find clients/android/app/build/outputs/apk -name "*.apk" | head -1 | xargs -I{} cp {} "dist/android/OpenPrintShare-Android-arm64-$VERSION.apk"
+          cp clients/android/app/build/outputs/apk/debug/app-debug.apk "dist/android/OpenPrintShare-Android-universal-$VERSION.apk"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -141,7 +147,7 @@ jobs:
           name: dist-android
           path: dist/android/*
 
-  # ------------------------------------------------------------- iOS（有签名证书时产出 ipa）
+  # ------------------------------------------------------------- iOS（无签名证书时产出 xcarchive.zip 供开发者侧打包）
   build-ios:
     runs-on: macos-latest
     steps:
@@ -153,6 +159,15 @@ jobs:
           xcodebuild -project OpenPrintShare.xcodeproj -scheme OpenPrintShare \
             -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' \
             archive -archivePath ../../dist/ios/OpenPrintShare.xcarchive CODE_SIGNING_ALLOWED=NO
+
+      # xcarchive 是目录树（数百文件）——打成单个 zip 再上传，避免 release flatten 平铺污染附件列表
+      - name: Package xcarchive as single zip
+        run: |
+          VERSION=$(sed -n "s/.*OPS_VERSION = '\([^']*\)'.*/\1/p" mini-services/ops-host/src/core/types.ts | head -1)
+          cd dist/ios
+          zip -ryq "OpenPrintShare-iOS-$VERSION.xcarchive.zip" OpenPrintShare.xcarchive
+          rm -rf OpenPrintShare.xcarchive
+          ls -lh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
