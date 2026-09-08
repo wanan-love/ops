@@ -3,6 +3,8 @@
 #  本地（Linux）：交叉编译 arm64 + x64 单文件可执行（含内嵌 Web）
 #  macOS 宿主 / CI（github actions macos runner）：追加 .app Bundle 与 .dmg
 #    ./scripts/build-macos.sh --dmg   # 仅在 macOS 上可用（hdiutil）
+#  磁盘策略（CI macos runner 仅 ~14GB 可用）：.app 直接产出到 dist/macos（不做
+#  STAGE 双份拷贝，省 ~140MB/架构）；hdiutil 失败降级 warn（.app 产物仍在，不阻塞发布链）
 set -euo pipefail
 source "$(dirname "$0")/build-common.sh"
 
@@ -18,10 +20,8 @@ if [ "$(uname)" = "Darwin" ]; then
     BIN="$MAC_DIR/$(out_name macOS "$ARCH")"
     APP_NAME="$(out_name macOS "$ARCH" .app)"
     DMG_NAME="$(out_name macOS "$ARCH" .dmg)"
-    APPROOT="$STAGE/macos-$ARCH"
-    rm -rf "$APPROOT"
-    MACOS_DIR="$APPROOT/$APP_NAME/Contents/MacOS"
-    RES_DIR="$APPROOT/$APP_NAME/Contents/Resources"
+    MACOS_DIR="$MAC_DIR/$APP_NAME/Contents/MacOS"
+    RES_DIR="$MAC_DIR/$APP_NAME/Contents/Resources"
     mkdir -p "$MACOS_DIR" "$RES_DIR"
 
     cp "$BIN" "$MACOS_DIR/OpenPrintShare"
@@ -39,7 +39,7 @@ exec "\$DIR/OpenPrintShare" "\$@"
 EOF
     chmod 755 "$MACOS_DIR/OpenPrintShare.sh"
 
-    cat > "$APPROOT/$APP_NAME/Contents/Info.plist" <<EOF
+    cat > "$MAC_DIR/$APP_NAME/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -64,15 +64,17 @@ EOF
 </plist>
 EOF
 
-    # 图标（svg → icns 需要 iconutil；CI 中用 rsvg/pngquant 生成；此处放 svg）
     log "制作 .app → $MAC_DIR/$APP_NAME"
-    cp -R "$APPROOT/$APP_NAME" "$MAC_DIR/$APP_NAME"
 
     if [[ " $* " == *" --dmg "* ]] && command -v hdiutil >/dev/null; then
       log "制作 .dmg → $MAC_DIR/$DMG_NAME"
       rm -f "$MAC_DIR/$DMG_NAME"
-      hdiutil create -volname "OpenPrintShare $VERSION ($ARCH)" -srcfolder "$APPROOT/$APP_NAME" -ov -format UDZO "$MAC_DIR/$DMG_NAME" >/dev/null
-      log "  → $MAC_DIR/$DMG_NAME"
+      # 磁盘不足等环境性失败降级为 warn（.app 产物仍在，不阻塞发布链）
+      if hdiutil create -volname "OpenPrintShare $VERSION ($ARCH)" -srcfolder "$MAC_DIR/$APP_NAME" -ov -format UDZO "$MAC_DIR/$DMG_NAME" >/dev/null 2>&1; then
+        log "  → $MAC_DIR/$DMG_NAME"
+      else
+        warn "hdiutil 失败（常见原因：runner 磁盘不足）——保留 .app 产物继续，$ARCH dmg 跳过"
+      fi
     fi
   done
 else
