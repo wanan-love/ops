@@ -647,3 +647,33 @@ Stage Summary:
 - 运维备忘：块注释内严禁 */ 出现在词中间（fax*/scan*/ 会提前终止注释）；agent-browser eval 每次调用独立作用域（变量重声明会 SyntaxError，用 IIFE）；toast 验证用 body.innerText includes 而非 sonner 选择器
 - 已知风险/未验证：①HP LEDM/CDM 真实机型响应细节（机型覆盖面、代际差异、字段缺失组合）需真机——XML/JSON 解析已宽容但格式变体无法穷举（无真机不宣称）；②LEDM 端口 8080 在部分 HP 机型可能为 80（EWS 同源）——设置双端口可调已兜底；③下一阶段建议（VENDOR_RESEARCH §5 更新后）：HP 私有 MIB 适配器（PML OID 树）→ Lexmark MIB → Brother PJL SUPPLY 真机 → Epson libescpr（仅新代）→ Canon ivec XML；④真实硬件验证轮（Windows/CUPS/HP 真机）仍是最大缺口
 - cron「任务审查与持续迭代」任务 **365877** 持续有效（本轮重建）
+
+---
+Task ID: P9.1
+Agent: main-agent
+Task: 修复 GitHub Actions CI 全量失败（用户报告「action构建都失败了」）+ 重建被禁用的 cron 定时任务
+
+Work Log:
+- 用户报告 CI 构建失败 → GitHub API 查询：ci workflow 连续 6 个 run 全部 failure（从 906216e 起累计）
+- 下载失败日志定位：lint job 的「Host smoke test」步骤 exit code 22（curl -f HTTP 错误）
+- 根因确认：v0.4.5 落地「正式模式零虚拟打印机」红线时，POST /api/tests/run 在正式模式返回 403；而 CI 用 `bun index.ts` 直接启动为正式模式（无 OPS_DEV_MODE）→ curl -sf 拿到 403 → exit 22 → 所有 run 失败。属于红线改动引入的 CI 回归
+- 修复 .github/workflows/ci.yml：
+  ① CI 以 OPS_DEV_MODE=1 启动 host（测试模式，自测依赖虚拟打印机，符合红线「仅限隔离测试环境」）
+  ② 就绪等待循环（最多 30s）替代固定 sleep 4
+  ③ 触发全量 22 场景自测 + 轮询 run.status running→done（最多 300s，本地实测 55.5s）
+  ④ 严格断言 failed==0 && passed==total（替代旧 grep '"pass"' 弱断言——单个 pass 即通过）
+  ⑤ 失败时 tail host.log 40 行便于排障
+- 本地预演：22/22 全量 pass，断言脚本验证通过
+- git 处理：本地与远程出现重复 docs 提交（6bbd956 vs 7dd21c4 内容一致）→ reset+cherry-pick 清理 → 推送 2a352a6
+- 重建 cron：旧任务 365877 因「exec limits exceeded」被系统禁用 → 删除并重建为 368290（fixed_rate 900s，描述更新为 v0.4.7 基线 + CI 修复要点 + run 轮询口径）
+
+Stage Summary:
+- CI 修复并验证通过：2a352a6 run conclusion=success，日志确认「selftest all pass: 22/22」「host smoke test OK」
+- docker.yml / release-build.yml 检查过：构建类 workflow，不调用测试 API，无同类问题
+- cron 定时任务重建：368290（15 分钟周期 webDevReview）
+- 教训沉淀：改动运行模式语义（如 403 门禁）时必须同步审查 CI/脚本里的调用方——本次 6 个 run 连续失败即漏掉了这一环
+
+未解决问题或风险与下一步优先建议：
+- CI 历史 6 个失败 run 无法改写结论（正常，新提交已绿）
+- 下一阶段按 VENDOR_RESEARCH.md §5 顺序推进：HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB → Brother PJL SUPPLY 真机验证
+- release-build workflow（v* tag 触发）尚未在本轮验证过——下次打 tag 前建议先本地跑 bash scripts/build-all.sh 完整演练
