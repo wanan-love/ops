@@ -99,9 +99,19 @@ jobs:
           bun install --frozen-lockfile
           OPS_EXPORT=1 bunx next build
           (cd mini-services/ops-host && bun install --frozen-lockfile && bun ../../scripts/build-web-embed.ts ../../out)
+          # macOS runner 磁盘紧张（~14GB）：静态导出后 .next 与主项目 node_modules
+          # 不再参与 host 编译（host 用自己的 node_modules + out/ 嵌入清单），及时回收
+          rm -rf .next node_modules
 
       - name: Build .app + .dmg (arm64 + x64)
         run: bash scripts/build-macos.sh --dmg
+
+      # .app 是目录树——打单 zip 上传（Release flatten 平铺修复，同 iOS xcarchive 策略）
+      - name: Package .app as single zip
+        run: |
+          cd dist/macos
+          find . -maxdepth 1 -name "*.app" -exec sh -c 'zip -ryq "$1.zip" "$1" && rm -rf "$1"' _ {} \;
+          ls -lh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

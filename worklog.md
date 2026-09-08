@@ -677,3 +677,35 @@ Stage Summary:
 - CI 历史 6 个失败 run 无法改写结论（正常，新提交已绿）
 - 下一阶段按 VENDOR_RESEARCH.md §5 顺序推进：HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB → Brother PJL SUPPLY 真机验证
 - release-build workflow（v* tag 触发）尚未在本轮验证过——下次打 tag 前建议先本地跑 bash scripts/build-all.sh 完整演练
+
+---
+Task ID: P9.2（任务审查与持续迭代轮 + Release 发布轮）
+Agent: main-agent
+Task: 用户指令「继续任务审查和持续迭代，完成后推送github打包release」→ Release 链路全面审查加固 + v0.4.8 发布
+
+Work Log:
+- 【基线审查】lint 0 错；服务存活（:3000/:3001 v0.4.7 devMode）；CI 双绿（dac6aaf/2a352a6）；cron 368290 在岗
+- 【Release 链路审查】（release-build.yml 从未运行过，全链路人工审查）发现 3 个问题：
+  ① P0 Android job 用全局 gradle 命令——ubuntu runner 不预装全局 gradle，且工程缺 gradlew/wrapper jar（只有 properties）→ job 必败 → release job（needs all）被阻塞
+  ② P0 iOS job 上传 xcarchive 目录树（数百文件）→ release flatten find -type f 平铺全部 → Release 附件列表被垃圾文件污染
+  ③ P1 Android versionName=0.3.0 与 Host 版本不同源（产物名 0.4.x 但 APK 内部 0.3.0，违反版本单一来源真实性）；产物命名 arm64 但无 abi splits（实为 universal）；assembleRelease 配置指向不存在的 keystore 必失败再 fallback debug（绕路）
+- 【修复】
+  ① Android Gradle Wrapper 8.7 三件套入仓（gradlew/gradlew.bat/jar 从 gradle 官方 GitHub v8.7.0 tag 下载，匹配 distributionUrl；jar 校验 zip 合法 43KB）；CI 改 ./gradlew
+  ② iOS job：xcarchive → zip -ryq 单文件（版本号进产物名 OpenPrintShare-iOS-$VERSION.xcarchive.zip）再上传
+  ③ app/build.gradle.kts 支持 -PopsVersion/-PopsVersionCode 注入（findProperty 回落 0.3.0 本地调试值）；CI 注入 types.ts OPS_VERSION + versionCode 公式 major*10000+minor*100+patch（0.4.8→408）；产物命名 universal；明确 assembleDebug debug-signed 策略；build-android.sh 同步（wrapper 优先 + 注入 + universal）
+- 【本地演练】（与 CI 同序）OPS_EXPORT=1 next build（9.1s，3 静态页）→ build-web-embed 30 资产 → bun compile 93MB 单文件 → 产物冒烟全通过：--version v0.4.7、正式模式（devMode=False 红线遵守：打包产物默认零虚拟设备）、REST :4101 200、内嵌 Web 控制台 / 200（41716B）+ logo.svg 200、mDNS 启动；演练残留清理（dist//tmp/ops-smoke）
+- 【版本推进】v0.4.7 → v0.4.8 四处单一来源（core/types.ts、host package.json、前端 src/lib/ops/types.ts、README badge）+ README 特性清单 P9.1 条目 + checklist 第 22 项
+- 【验收】lint 0 错；bun --watch 自动重启后全量自测 22/22（tr-mtslhmma-2752）；agent-browser 双视口 1280/393 DOM 级零水平溢出；零 console error；首页 v0.4.8 渲染正常；种子态完好（存储 3 台，API 2 台为 client scope 过滤 vp-receipt 未共享属设计）
+- 【发布】推送 main b5ff521 → 打 tag v0.4.8 → release-build/docker/ci 三 workflow 启动
+
+Stage Summary:
+- 交付：Release 多平台发布链路从「从未验证、必败」到「全链路审查加固 + 本地演练通过 + tag 已触发」；v0.4.8 发布进行中
+- 关键工程决策：Android wrapper 入仓（CI 可重复构建不依赖 runner 环境）；APK 版本从 Host 单一来源注入（与产物名一致）；iOS xcarchive 单 zip（附件整洁）；Android universal 命名（真实性：无 abi splits 不冒称 arm64）
+- 产物冒烟实证：93MB 单文件 = Bun 运行时 + 30 Web 资产内嵌 + REST/WS/mDNS 全功能；正式模式默认（虚拟设备红线延伸到打包产物）
+
+未解决问题或风险与下一阶段优先建议：
+- release-build 5 平台 job + docker 正在运行（本轮随后监控结论）——Android 首次 gradle 构建需拉依赖（google() maven），若网络受限可能超时重试
+- iOS xcarchive 无签名（CODE_SIGNING_ALLOWED=NO），产物供开发者侧 Xcode 再签名分发；正式 ipa 需 Apple 开发者证书（后续 secrets）
+- Android debug-signed APK 可安装可用，正式签名密钥待用户配置 secrets（ANDROID_KEYSTORE_BASE64 等）后升级 assembleRelease
+- iOS 工程内部 MARKETING_VERSION 未与 Host 同源（pbxproj 手改风险大于收益，暂不处理，记录在案）
+- 下一阶段：VENDOR_RESEARCH §5 顺序推进 HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB；或按 cron 轮自主判断
