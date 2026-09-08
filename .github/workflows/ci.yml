@@ -22,10 +22,34 @@ jobs:
       - name: Host smoke test
         run: |
           cd mini-services/ops-host
-          (bun index.ts &) 
-          sleep 4
+          # CI 以开发/测试模式启动（OPS_DEV_MODE=1）：自动化自测依赖虚拟打印机，
+          # 正式模式按设计返回 403（正式产品零虚拟打印机红线），仅限隔离测试环境使用。
+          OPS_DEV_MODE=1 bun index.ts > /tmp/host.log 2>&1 &
+          # 等待 REST 就绪（最多 30s）
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/api/system/info > /dev/null 2>&1 && break
+            sleep 1
+          done
           curl -sf http://localhost:3001/api/system/info | grep -q openprintshare-host
-          curl -sf -X POST http://localhost:3001/api/tests/run -H 'content-type: application/json' -d '{"ids":["normal-print"]}' > /dev/null
-          sleep 8
-          curl -sf http://localhost:3001/api/tests/runs | grep -q '"pass"'
+          # 触发全量自测（22 场景，本地实测约 55s）
+          RUN_ID=$(curl -sf -X POST http://localhost:3001/api/tests/run -H 'content-type: application/json' -d '{}' \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['runId'])")
+          # 轮询直到完成（run.status: running -> done，最多 300s）
+          for i in $(seq 1 300); do
+            STATUS=$(curl -sf http://localhost:3001/api/tests/runs/$RUN_ID \
+              | python3 -c "import sys,json;print(json.load(sys.stdin)['run']['status'])" 2>/dev/null || echo pending)
+            [ "$STATUS" = "done" ] && break
+            sleep 1
+          done
+          # 严格断言：全量场景 pass（替代旧 grep '"pass"' 弱断言）
+          curl -sf http://localhost:3001/api/tests/runs/$RUN_ID | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)['run']
+          assert r['status'] == 'done', 'run not finished: %r' % r['status']
+          failed_ids = [s['id'] for s in r['results'] if s['status'] != 'pass']
+          assert not failed_ids and r['failed'] == 0 and r['passed'] == r['total'], \
+              'selftest failures: %s' % failed_ids
+          print('selftest all pass: %d/%d' % (r['passed'], r['total']))
+          "
+          tail -n 40 /tmp/host.log
           echo "host smoke test OK"
