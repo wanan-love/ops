@@ -733,3 +733,32 @@ Stage Summary:
 - iOS 产物为 xcarchive.zip（开发者侧 Xcode 再签名；正式 ipa 待 Apple 开发者证书 secrets）
 - macOS .dmg 未公证（Gatekeeper 首次运行需右键打开；Apple notarytool 待证书）
 - 下一阶段：VENDOR_RESEARCH §5 → HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB；真机验证清单见 README checklist 13
+
+---
+Task ID: P10（真人用户旅程走查轮）
+Agent: main-agent
+Task: 用户指令「继续任务审查和持续迭代，要模拟真人用户操作看遇到的问题和优化的方向」→ 端到端真人视角走查 + 4 项 UX 修复
+
+Work Log:
+- 【走查方法】用户画像：局域网普通用户首次打开控制台目标「打一份 PDF」；agent-browser 模拟真实交互（点击/提交/切换/横滑）而非仅快照
+- 【桌面旅程】概览首屏（快速开始三步引导✓）→ 打印页（示例文档一键试用✓→提交反馈 jobID+张数预估+直达队列✓）→ 队列（WebSocket 实时进度✓ 筛选器✓）→ 任务详情 Dialog（时间线 7 条/墨耗/原始 PDF✓）→ 打印机卡片（能力 chips/共享开关✓）→ 扫描（1.9s 完成+PNG 预览+导出 PDF✓）→ 配对/后端/日志页（后端页如实可用性声明✓）
+- 【移动端旅程 393】tab 横滑布局✓（scrollWidth 979>361）→ 打印提交全流程通过✓ → 深色模式✓
+- 【发现并修复 4 项】
+  ① 队列进度条 92.5% vs 文字 93% 舍入不一致（视觉跳动）→ JobProgress 统一 Math.round 单一口径
+  ② 移动端触控目标 <44px（更换文件 32px/在队列中查看 32px/色彩 radio label 20px）→ min-h-11 sm:min-h-8 响应式触控（移动 44px/桌面紧凑）
+  ③ 概览指标「2/3」缩写语义新用户不可解读 → 值显共享数+hint「共 N 台 · N 台在线」
+  ④ 快速开始与连接状态矛盾（已连接仍首推「发现 Host」）→ connected 状态自适应重排（已连接：提交打印→队列→发现其他 Host；未连接保持原序）
+- 【回归验证】修复后进度 25%/25% 一致；触控复测 <36px 项仅剩非交互 Label；lint 0；全量自测 22/22；双视口零溢出；0 console error
+- 【QA 清理】3 个走查 job 工件删除（clear-test-data 不覆盖 job 工件——bun --watch 需内容变化才重启，touch mtime 无效→kill+标准命令重启）；种子态 3 台恢复；重启后前端自动重连正常
+- 【观察记录/优化方向（不在本轮修）】打印页无页数预览（功能级增强候选）；概览「已完成任务」与 hint「全部历史任务」信息重复（微小）；radio 圆点 16px 为指示器（外层 label 已 44px 达标）
+
+Stage Summary:
+- 首次系统化真人视角 UX 走查：产品核心链路（打印/队列/详情/扫描）体验完整度高于预期，反馈链设计成熟；修复 4 项体验瑕疵（进度一致性/触控目标/首屏语义/引导智能化）
+- 交付提交 e10312a 已推送 main（纯前端 3 文件 39+/18-）
+- 方法论沉淀：UX 走查 = agent-browser 真实交互（click/fill 而非只 snapshot）+ 新用户首屏理解度 + 移动端触控标准（44px）+ 舍入一致性细节
+
+未解决问题或风险与下一阶段优先建议:
+- 打印页页数/大小预览（提交前确认）——下轮功能候选
+- clear-test-data 不清 job 工件 → 可补一个「清理已完成任务」管理操作（正式产品需要）
+- bun --watch 不响应 mtime-only touch（运维备忘更新：重启 host 用 kill + 标准启动命令）
+- 下一阶段：VENDOR_RESEARCH §5 HP 私有 MIB 或继续 UX 打磨（打印预览）
