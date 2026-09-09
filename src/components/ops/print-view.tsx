@@ -155,7 +155,7 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
                 <FileText className="size-8 text-emerald-600 dark:text-emerald-400" aria-hidden />
                 <p className="max-w-full truncate text-sm font-medium">{file.name}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}>
+                <Button variant="ghost" size="sm" className="min-h-11 sm:min-h-8" onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}>
                   更换文件
                 </Button>
               </>
@@ -270,12 +270,13 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
               className="flex gap-4"
               disabled={caps?.color === false}
             >
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm" aria-label="彩色打印">
+              {/* label 整体可点击；py-2.5 使触控目标≥44px（移动端可用性） */}
+              <label className="flex min-h-11 cursor-pointer items-center gap-1.5 py-2.5 text-sm sm:min-h-8 sm:py-0" aria-label="彩色打印">
                 <RadioGroupItem value="color" />
                 <Palette className="size-3.5 text-muted-foreground" aria-hidden />
                 彩色
               </label>
-              <label className="flex cursor-pointer items-center gap-1.5 text-sm" aria-label="黑白打印">
+              <label className="flex min-h-11 cursor-pointer items-center gap-1.5 py-2.5 text-sm sm:min-h-8 sm:py-0" aria-label="黑白打印">
                 <RadioGroupItem value="monochrome" />
                 黑白
               </label>
@@ -332,7 +333,7 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
               <p className="mt-1 text-xs text-muted-foreground">
                 {submittedJob.pageCount} 页 × {submittedJob.options.copies} 份 ≈ {submittedJob.sheetsTotal} 张 · 队列位置按提交顺序
               </p>
-              <Button size="sm" variant="outline" className="mt-2" onClick={() => goto('queue')}>
+              <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" onClick={() => goto('queue')}>
                 <Files className="size-3.5" aria-hidden />
                 在队列中查看
               </Button>

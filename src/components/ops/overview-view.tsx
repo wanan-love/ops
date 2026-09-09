@@ -12,6 +12,7 @@ import type { TabValue } from './ops-app'
 
 export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
   const hostInfo = useOpsStore((s) => s.hostInfo)
+  const connected = useOpsStore((s) => s.connected)
   const printers = useOpsStore((s) => s.printers)
   const jobs = useOpsStore((s) => s.jobs)
   const events = useOpsStore((s) => s.events)
@@ -38,7 +39,8 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
   const completedCount = stats?.jobs.completed ?? jobs.filter((j) => j.state === 'completed').length
 
   const cards = [
-    { label: '共享打印机', value: `${sharedCount}/${printers.length}`, hint: `${onlineCount} 台在线`, icon: Printer },
+    // 值直接展示共享数，总数/在线数在 hint 说明——新用户无需解读「2/3」缩写语义
+    { label: '共享打印机', value: String(sharedCount), hint: `共 ${printers.length} 台 · ${onlineCount} 台在线`, icon: Printer },
     { label: '进行中任务', value: String(activeJobs.length), hint: '排队 / 打印 / 暂停', icon: Activity },
     { label: '已完成任务', value: String(completedCount), hint: '全部历史任务', icon: CircleCheck },
     {
@@ -192,15 +194,32 @@ export function OverviewView({ goto }: { goto: (v: TabValue) => void }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('discovery')}>
-              1. 发现局域网 Host
-            </Button>
-            <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('print')}>
-              2. 提交 PDF 打印任务
-            </Button>
-            <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('debug')}>
-              3. 调试控制台 / 自动化测试
-            </Button>
+            {/* 已连接 Host 时引导直接开始使用（发现页服务于多 Host/首次接入场景），未连接时保持「先发现」顺序 */}
+            {connected ? (
+              <>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('print')}>
+                  1. 提交 PDF 打印任务
+                </Button>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('queue')}>
+                  2. 查看打印队列
+                </Button>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('discovery')}>
+                  3. 发现局域网其他 Host
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('discovery')}>
+                  1. 发现局域网 Host
+                </Button>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('print')}>
+                  2. 提交 PDF 打印任务
+                </Button>
+                <Button variant="outline" className="w-full justify-start transition-colors duration-200 hover:border-primary/40" onClick={() => goto('debug')}>
+                  3. 调试控制台 / 自动化测试
+                </Button>
+              </>
+            )}
             <p className="pt-1 text-[11px] leading-relaxed text-muted-foreground/70">
               接入真实打印机请前往「打印后端」：通过 mDNS 扫描或 IPP URI 添加，能力由设备真实返回（读取不到 ≠ 不支持）。
             </p>

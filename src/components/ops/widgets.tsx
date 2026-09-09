@@ -221,17 +221,18 @@ export function InkBars({ ink, compact = false }: { ink: InkLevels; compact?: bo
   )
 }
 
-/** 任务进度单元格（含百分比文字） */
+/** 任务进度单元格（含百分比文字）——进度条与文字统一舍入口径（Math.round），避免 92.5%/93% 并存跳动 */
 export function JobProgress({ job }: { job: PrintJob }) {
+  const pct = Math.round(job.progress)
   if (job.state === 'completed') return <Progress value={100} className="h-2 [&>div]:bg-emerald-500" aria-label="进度 100%" />
   if (job.state === 'pending') return <div className="text-xs text-muted-foreground">— 等待开始 —</div>
-  if (job.state === 'paused') return <Progress value={job.progress} className="h-2 [&>div]:bg-orange-500" aria-label={`暂停于 ${job.progress}%`} />
+  if (job.state === 'paused') return <Progress value={pct} className="h-2 [&>div]:bg-orange-500" aria-label={`暂停于 ${pct}%`} />
   if (job.state === 'failed') return <div className="text-xs text-red-600 dark:text-red-400 truncate" title={job.error ?? ''}>{job.error ?? '失败'}</div>
   if (job.state === 'cancelled') return <div className="text-xs text-muted-foreground">已取消</div>
   return (
     <div className="flex items-center gap-2">
-      <Progress value={job.progress} className="ops-shimmer-progress h-2 [&>div]:bg-amber-500" aria-label={`进度 ${job.progress}%`} />
-      <span className="w-9 text-right font-mono text-[11px] tabular-nums text-muted-foreground">{job.progress.toFixed(0)}%</span>
+      <Progress value={pct} className="ops-shimmer-progress h-2 [&>div]:bg-amber-500" aria-label={`进度 ${pct}%`} />
+      <span className="w-9 text-right font-mono text-[11px] tabular-nums text-muted-foreground">{pct}%</span>
     </div>
   )
 }
