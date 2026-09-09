@@ -233,6 +233,8 @@ export class CupsPrinterBackend implements PrinterBackend {
       args.push('-o', `sides=${sides}`)
       args.push('-o', `media=${req.options.paperSize}`)
       args.push('-o', `print-color-mode=${req.options.colorMode === 'color' ? 'color' : 'monochrome'}`)
+      // page-ranges：host 侧已验证并归一化（REST 层 parsePageRange）；此处仅转发合法值
+      if (req.options.pageRange && req.options.pageRange.trim() !== '') args.push('-o', `page-ranges=${req.options.pageRange}`)
       // 临时文件放 data 目录 tmp，打印后删除
       await fs.mkdir(this.tmpDir, { recursive: true })
       const tmpFile = join(this.tmpDir, `ops-${Date.now()}-${Math.floor(Math.random() * 1e6)}.pdf`)

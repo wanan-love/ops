@@ -4,7 +4,7 @@
  * Web 控制台通过 tsconfig path alias (@ops-core/*) 复用此契约。
  */
 
-export const OPS_VERSION = '0.4.8'
+export const OPS_VERSION = '0.4.9'
 export const OPS_API_VERSION = 1
 
 /** 客户端平台标识 */

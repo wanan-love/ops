@@ -43,12 +43,16 @@ export const ippScenarios: IppScenario[] = [
       api.expect(supplies.every((s) => typeof s.levelPct === 'number' && s.levelPct >= 0 && s.levelPct <= 100), '每个耗材应有数值墨量（82/64/91/77）')
       api.expect(report.probes.some((p) => p.source === 'IPP' && p.ok), 'probes 应含成功的 IPP 探测记录')
 
-      const job = await api.submit(printer, 2)
-      api.step('提交任务', `${job.id}（${job.sheetsTotal} 张，走 BackendJobRunner → 真实 IPP Print-Job）`)
+      const job = await api.submit(printer, 2, 1, { pageRange: '1' })
+      api.step('提交任务（页面范围 1）', `${job.id}（${job.sheetsTotal} 张，走 BackendJobRunner → 真实 IPP Print-Job）`)
       const done = await api.waitFor(job.id, (j) => j.state === 'completed', 30000)
       api.expect(done.progress === 100, '任务应完成（progress=100）')
       api.expect(done.backendJobId !== undefined && done.backendJobId !== '', 'job 应记录 backendJobId（IPP job-id）')
       api.expect(done.timeline.some((e) => e.reason === 'backend-submit'), '时间线应包含 backend-submit 后端提交记录')
+      // page-ranges 转发验证：IPP Print-Job 应携带 page-ranges（RFC 8011 1setOf rangeOfInteger），vipp 侧应记录
+      // 注意 printerId 口径：vipp 服务以打印机键（'vipp-full'）索引，而非导入后的 ctx printer.id（对照 ipp-cancel 的 vippJobState 用法）
+      const forwarded = api.vippJobPageRanges('vipp-full', done.backendJobId ?? '')
+      api.expect(JSON.stringify(forwarded) === JSON.stringify([[1, 1]]), `page-ranges 应转发并记录为 [[1,1]]（实际 ${JSON.stringify(forwarded)}）`)
       const milestones = done.timeline.filter((e) => e.type === 'progress').map((e) => e.progress ?? 0)
       api.expect([25, 50, 75, 100].every((m) => milestones.some((v) => v >= m)), `时间线应含 25/50/75/100 里程碑（实际 ${milestones.join(',')}）`)
       api.expect(await api.artifactExists(done, 'result.json'), 'result.json 已落盘')

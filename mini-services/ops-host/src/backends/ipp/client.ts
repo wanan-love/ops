@@ -1,4 +1,5 @@
 import type { PrintOptions } from '../../core/types'
+import { parsePageRange } from '../../core/pagerange'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import {
@@ -189,6 +190,26 @@ export class IppClient {
   ): Promise<{ jobId: number | null; jobUri: string | null; state: number; reasons: string[]; message: IppMessage }> {
     const sides = options.duplex === 'long-edge' ? 'two-sided-long-edge' : options.duplex === 'short-edge' ? 'two-sided-short-edge' : 'one-sided'
     const quality = options.quality === 'draft' ? 3 : options.quality === 'high' ? 5 : 4
+    // page-ranges（RFC 8011 1setOf rangeOfInteger）：仅当 host 侧已验证过的范围串（normalized）才转发；
+    // 此处无总页数上下文（totalPages 传∞，仅做语法归一）——非法语法静默跳过（防御：REST 层已拒非法值）
+    const jobAttrs: EncAttr[] = [
+      attr.integer('copies', Math.max(1, Math.floor(options.copies))),
+      attr.keyword('sides', sides),
+      attr.keyword('media', options.paperSize),
+      attr.keyword('print-color-mode', options.colorMode === 'color' ? 'color' : 'monochrome'),
+      attr.enum('print-quality', quality),
+    ]
+    if (options.pageRange && options.pageRange.trim() !== '') {
+      const parsed = parsePageRange(options.pageRange, Number.MAX_SAFE_INTEGER)
+      if (parsed.ok && parsed.normalized) {
+        // normalized 形如 "1-3,5" → [[1,3],[5,5]]
+        const pairs = parsed.normalized.split(',').map((seg): [number, number] => {
+          const [a, b] = seg.split('-')
+          return [Number(a), Number(b ?? a)]
+        })
+        jobAttrs.push(attr.ranges('page-ranges', pairs))
+      }
+    }
     const msg = await this.request(uri, {
       code: OP_PRINT_JOB,
       groups: [
@@ -203,16 +224,7 @@ export class IppClient {
             attr.mime('document-format', 'application/pdf'),
           ],
         },
-        {
-          tag: GROUP_JOB,
-          attributes: [
-            attr.integer('copies', Math.max(1, Math.floor(options.copies))),
-            attr.keyword('sides', sides),
-            attr.keyword('media', options.paperSize),
-            attr.keyword('print-color-mode', options.colorMode === 'color' ? 'color' : 'monochrome'),
-            attr.enum('print-quality', quality),
-          ],
-        },
+        { tag: GROUP_JOB, attributes: jobAttrs },
       ],
       data: pdf,
     })

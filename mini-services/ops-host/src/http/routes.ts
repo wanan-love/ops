@@ -1,6 +1,7 @@
 import { Router, consoleAuthGate, extractConsoleToken, headerString, parseJsonBody, readBody, sendError, sendJson } from './router'
 import type { HostContext } from '../host'
 import { exactPageCount, isPdf, makeSamplePdf } from '../pdf/sample'
+import { parsePageRange } from '../core/pagerange'
 import type { BackendKind, CapabilityReport } from '../core/types'
 import { probeSnmpConsumables, probeSnmpStatus, snmpHostFromUri, type SnmpProbeOptions } from '../backends/snmp'
 import { pjlHostFromUri, probePjlStatus, probePjlSupply, type PjlProbeOptions } from '../backends/pjl'
@@ -537,6 +538,15 @@ export function buildRouter(): Router {
 
   // ---------------------------------------------------------------- jobs（打印）
 
+  /** 提交前预检（P11）：与 POST /api/jobs 同源解析（exactPageCount），
+   * 前端预览与提交后任务记录的页数必然一致；不落盘、不建任务、无副作用 */
+  router.post('/api/pdf/inspect', async (ctx, _req, res, _params, _query, body) => {
+    if (body.length === 0) return sendError(res, 400, '请求体为空（应为 PDF 二进制）')
+    if (!isPdf(new Uint8Array(body))) return sendError(res, 415, '请求体不是有效的 PDF 文件（缺少 %PDF 魔数）')
+    const pageCount = await exactPageCount(new Uint8Array(body))
+    sendJson(res, 200, { pageCount, sizeBytes: body.length })
+  })
+
   router.post('/api/jobs', async (ctx, req, res, _params, query, body) => {
     const printerId = query.get('printerId')
     const fileName = query.get('fileName') ?? 'document.pdf'
@@ -564,7 +574,20 @@ export function buildRouter(): Router {
       printer.capabilities,
       printer.defaultOptions,
     )
-    const pageCount = (await exactPageCount(new Uint8Array(body))) ?? undefined
+    const totalPages = await exactPageCount(new Uint8Array(body))
+    // 页面范围提前验证 + 页数语义对齐：job.pageCount = 实际将打印的页数（范围裁剪后），
+    // 与张数预估/后端转发同一口径；非法范围 → 400（比提交后失败快且可解释）
+    let pageCount: number | undefined
+    if (options.pageRange && options.pageRange.trim() !== '') {
+      if (totalPages === null) {
+        return sendError(res, 422, `无法解析文档页数，页面范围无法验证（可去掉范围后提交）`)
+      }
+      const parsed = parsePageRange(options.pageRange, totalPages)
+      if (!parsed.ok) return sendError(res, 400, parsed.error ?? '页面范围无效')
+      options.pageRange = parsed.normalized ?? undefined
+      pageCount = parsed.count
+    }
+    if (pageCount === undefined) pageCount = totalPages ?? undefined
     const job = await ctx.jobs.submit({ printer, pdf: new Uint8Array(body), fileName: fileName.slice(0, 120), options, source, pageCount })
     sendJson(res, 201, { job: trimJobTimeline(job, 12) })
   })
@@ -602,6 +625,21 @@ export function buildRouter(): Router {
     const result = ctx.engine.retryJob(job)
     if (!result.ok) return sendError(res, 409, result.message)
     sendJson(res, 200, { ok: true, message: result.message })
+  })
+
+  /** 清理终态任务（completed/failed/cancelled）——记录与磁盘工件（jobs/{id}/ 目录）一并删除；
+ * 进行中任务（pending/processing/paused）服务端硬保护，即使 body 显式请求也只交终态集合 */
+  router.post('/api/jobs/clear', async (ctx, _req, res, _params, _query, body) => {
+    const TERMINAL: string[] = ['completed', 'failed', 'cancelled']
+    const input = parseJsonBody<{ states?: string[] }>(body)
+    // 请求的 states 与终态集合求交（无效/非终态值静默忽略 → 幂等无操作）
+    const states = input?.states?.filter((s) => TERMINAL.includes(s)) ?? TERMINAL
+    const removed = await ctx.jobs.removeJobsWhere((j) => states.includes(j.state))
+    if (removed > 0) {
+      ctx.bus.emit('snapshot', {})
+      ctx.log.host(`已清理 ${removed} 个终态任务（${states.join('/')}）：记录与磁盘工件一并删除`)
+    }
+    sendJson(res, 200, { ok: true, removed, states })
   })
 
   router.get('/api/jobs/:id/events', (ctx, _req, res, params) => {

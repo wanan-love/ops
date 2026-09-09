@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { CheckCircle2, FileText, Files, Layers3, Loader2, Palette, Send, UploadCloud, Wand2 } from 'lucide-react'
+import { CheckCircle2, FileText, Files, Layers3, Loader2, Palette, ScanEye, Send, UploadCloud, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,7 +10,9 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useOpsClient, useOpsStore } from './store'
+import { createOpsClient } from '@/lib/ops/client'
 import { formatBytes } from './widgets'
+import { parsePageRange } from '@/lib/ops/pagerange'
 import type { PrintJob, PrintOptions } from '@/lib/ops/types'
 import type { TabValue } from './ops-app'
 
@@ -28,6 +30,32 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
   const [submitting, setSubmitting] = useState(false)
   const [submittedJob, setSubmittedJob] = useState<PrintJob | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  /** 提交前预检：页数（与提交后任务记录同源）；loading = 解析中；failed = 预检不可用（提交时 Host 再解析） */
+  const [inspect, setInspect] = useState<{ pageCount: number | null; loading: boolean; failed: boolean }>({
+    pageCount: null,
+    loading: false,
+    failed: false,
+  })
+  /** 预检版本号：换文件后丢弃在途旧结果（竞态守卫） */
+  const inspectSeq = useRef(0)
+  const restPort = useOpsStore((s) => s.restPort)
+
+  useEffect(() => {
+    if (!file) return
+    // 依赖稳定的原始值 restPort（useOpsClient 每次渲染返回新对象，作 effect 依赖会引发无限重渲染）
+    const seq = ++inspectSeq.current
+    setInspect({ pageCount: null, loading: true, failed: false })
+    createOpsClient(restPort)
+      .inspectPdf(file)
+      .then((res) => {
+        if (inspectSeq.current !== seq) return
+        setInspect({ pageCount: res.pageCount, loading: false, failed: false })
+      })
+      .catch(() => {
+        if (inspectSeq.current !== seq) return
+        setInspect({ pageCount: null, loading: false, failed: true })
+      })
+  }, [file, restPort])
 
   const sharedPrinters = useMemo(() => printers.filter((p) => p.shared && !p.test), [printers])
   const [printerId, setPrinterId] = useState<string>('')
@@ -93,7 +121,7 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
         file,
         fileName: file.name,
         printerId: effectivePrinter.id,
-        options: { ...options, pageRange: options.pageRange?.trim() || undefined },
+        options: { ...options, pageRange: effectiveRange },
       })
       setSubmittedJob(job)
       toast.success('打印任务已提交', {
@@ -120,6 +148,26 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
             { value: 'none', label: '单面' },
             { value: caps.duplex, label: caps.duplex === 'long-edge' ? '双面 · 长边翻转' : '双面 · 短边翻转' },
           ]
+
+  // ---------------------------------------------------------------- 提交前预览（P11）
+  // 页面范围本地校验（与 host 同口径；提前反馈避免注定失败的提交往返）。
+  // null = 未设置范围；{ok:false} = 本地可判定的非法（内联红字 + 禁用提交）；
+  // 页数未知时不判定（服务端权威校验，提交失败以 toast 呈现）
+  const rangeParse = useMemo(() => {
+    const raw = (options.pageRange ?? '').trim()
+    if (raw === '') return null
+    if (inspect.pageCount == null) return null
+    return parsePageRange(raw, inspect.pageCount)
+  }, [options.pageRange, inspect.pageCount])
+
+  const rangeInvalid = rangeParse !== null && !rangeParse.ok
+  /** 实际将打印的页数（范围裁剪后；与 job.pageCount 同口径）；null = 未知 */
+  const pagesToPrint = rangeParse?.ok ? rangeParse.count : inspect.pageCount
+  /** 张数预估（与 host sheetsTotal 同公式）：ceil(页 × 份 / (双面 ? 2 : 1))，至少 1 张 */
+  const sheetsEstimate =
+    pagesToPrint != null ? Math.max(1, Math.ceil((pagesToPrint * options.copies) / (options.duplex === 'none' ? 1 : 2))) : null
+  /** 提交时发给 host 的范围串：归一化后的值（与服务端存档一致） */
+  const effectiveRange = rangeParse?.ok ? (rangeParse.normalized ?? undefined) : options.pageRange?.trim() || undefined
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -317,11 +365,82 @@ export function PrintView({ goto }: { goto: (v: TabValue) => void }) {
           <div className="space-y-1.5">
             <Label htmlFor="page-range">页面范围（可选，例如 1-3,5）</Label>
             <Input id="page-range" value={options.pageRange ?? ''} onChange={(e) => setOptions((o) => ({ ...o, pageRange: e.target.value }))} placeholder="留空打印全部页面" />
+            {rangeInvalid && rangeParse && (
+              <p className="text-xs text-destructive" role="alert">
+                {rangeParse.error}
+              </p>
+            )}
           </div>
 
-          <Button className="w-full" size="lg" onClick={submit} disabled={!file || !effectivePrinter || submitting}>
+          {/* 提交前预览（P11）：与提交后任务记录同源口径，页数/张数预估提交前后一致 */}
+          {file && (
+            <div className="rounded-lg border bg-muted/30 p-3" aria-label="提交前预览">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                <ScanEye className="size-3.5" aria-hidden />
+                提交前预览
+              </p>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm sm:grid-cols-4">
+                <div>
+                  <p className="text-[11px] text-muted-foreground">页数</p>
+                  <p className="font-medium">
+                    {inspect.loading ? (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        <Loader2 className="size-3 animate-spin" aria-hidden />
+                        解析中…
+                      </span>
+                    ) : pagesToPrint != null ? (
+                      <>
+                        {pagesToPrint}
+                        {inspect.pageCount != null && pagesToPrint !== inspect.pageCount ? (
+                          <span className="text-muted-foreground"> / 共 {inspect.pageCount} 页</span>
+                        ) : (
+                          <span className="text-muted-foreground"> 页</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground" title="预检不可用，提交时 Host 将解析">未知</span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">份数</p>
+                  <p className="font-medium">{options.copies} 份</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">张数预估</p>
+                  <p className="font-medium">
+                    {sheetsEstimate != null ? (
+                      <span className="inline-flex items-center gap-1">
+                        <Layers3 className="size-3.5 text-muted-foreground" aria-hidden />≈ {sheetsEstimate} 张
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-muted-foreground">纸张 / 色彩</p>
+                  <p className="font-medium">
+                    {options.paperSize} · {caps?.color === false ? '黑白' : options.colorMode === 'color' ? '彩色' : '黑白'}
+                    {options.duplex !== 'none' ? ' · 双面' : ''}
+                  </p>
+                </div>
+              </div>
+              {rangeParse?.ok && rangeParse.normalized && (
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  范围已归一化：<span className="font-mono">{rangeParse.normalized}</span>
+                  {inspect.pageCount != null && `（${rangeParse.count} / ${inspect.pageCount} 页）`}
+                </p>
+              )}
+              {inspect.failed && (
+                <p className="mt-2 text-[11px] text-muted-foreground/70">预检不可用（页数未知），提交时 Host 将解析并验证</p>
+              )}
+            </div>
+          )}
+
+          <Button className="w-full" size="lg" onClick={submit} disabled={!file || !effectivePrinter || submitting || rangeInvalid}>
             {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" aria-hidden />}
-            {submitting ? '提交中…' : '提交打印'}
+            {submitting ? '提交中…' : rangeInvalid ? '修正页面范围后提交' : '提交打印'}
           </Button>
 
           {submittedJob && (

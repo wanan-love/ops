@@ -1,6 +1,7 @@
 import type { HostContext } from '../host'
 import type { DiscoveredIpPrinter, BackendKind, HostInfo, PrintJob, Printer, ScanDevice, ScanJob, ScenarioResult, TestRun, TestStep } from '../core/types'
 import { makeSamplePdf, exactPageCount } from '../pdf/sample'
+import { parsePageRange } from '../core/pagerange'
 import { probePjlStatus, probePjlSupply } from '../backends/pjl'
 import { probeHpLedmCdm } from '../backends/hp-ledm'
 import { connect } from 'node:net'
@@ -152,7 +153,7 @@ export class SelfTestRunner {
 
 export interface ScenarioApi {
   createPrinter(label: string, caps?: Partial<Printer['capabilities']>): Printer
-  submit(printer: Printer, pages?: number, copies?: number): Promise<PrintJob>
+  submit(printer: Printer, pages?: number, copies?: number, opts?: { pageRange?: string }): Promise<PrintJob>
   getJob(jobId: string): PrintJob
   getPrinter(printerId: string): Printer
   waitFor(jobId: string, predicate: (job: PrintJob) => boolean, timeoutMs?: number): Promise<PrintJob>
@@ -181,6 +182,8 @@ export interface ScenarioApi {
   importFromUri(backend: 'ipp', uri: string, opts?: { displayName?: string }): Promise<Printer>
   /** 读取 vipp 打印机内部任务状态（验证 IPP Cancel-Job 等服务端效果） */
   vippJobState(printerId: string, backendJobId: string): string | null
+  /** 读取 vipp 任务记录的 page-ranges（验证 IPP page-ranges 转发链路；null = 未携带或不存在） */
+  vippJobPageRanges(printerId: string, backendJobId: string): Array<[number, number]> | null
   // ---- 扫描（P3 · eSCL）----
   /** Virtual eSCL Scanner 是否启用（OPS_VSCAN_ENABLED=0 时 false → 场景 skipped） */
   vscanAvailable(): boolean
@@ -205,9 +208,12 @@ export interface ScenarioApi {
   /** 读取导出的 PDF 字节（null = 未导出或文件缺失） */
   scanPdfBytes(job: ScanJob): Promise<Uint8Array | null>
   // ---- 控制台鉴权（P2 安全轮）----
-  /** 真实 HTTP 探测（127.0.0.1:{restPort}）：验证 REST 层鉴权行为（401/200 等）
-   *  token 省略 → 无鉴权头；'WRONG' → 伪令牌；其他 → x-ops-console-token 令牌 */
-  httpProbe(method: string, path: string, opts?: { token?: string; body?: unknown; raw?: boolean }): Promise<{ status: number; json: { error?: string; code?: string; [k: string]: unknown } | null; bodyText: string }>
+  /** 真实 HTTP 探测（127.0.0.1:{restPort}）：验证 REST 层行为（鉴权/校验/新端点等）
+   *  token 省略 → 无鉴权头；'WRONG' → 伪令牌；其他 → x-ops-console-token 令牌；
+   *  bodyBytes → 原始二进制体（如 PDF，content-type: application/pdf）；headers → 追加自定义头（如 x-ops-options） */
+  httpProbe(method: string, path: string, opts?: { token?: string; body?: unknown; raw?: boolean; bodyBytes?: Uint8Array; headers?: Record<string, string> }): Promise<{ status: number; json: { error?: string; code?: string; [k: string]: unknown } | null; bodyText: string }>
+  /** 将 httpProbe 提交的任务纳入 run 清单（全部通过后自动清理） */
+  trackJob(jobId: string): void
   /** 直改 settings（场景清理/预备：非 HTTP 通道，不受鉴权门影响） */
   setConsoleAuth(enabled: boolean): Promise<void>
   /** 读取当前控制台令牌（启用态；禁用态 null） */
@@ -272,17 +278,26 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
       manifest?.createdPrinterIds.add(printer.id)
       return printer
     },
-    async submit(printer, pages = 2, copies = 1) {
+    async submit(printer, pages = 2, copies = 1, opts) {
       const pdf = await makeSamplePdf(pages, `SelfTest 文档（${pages} 页 × ${copies} 份）`)
       const pageCount = (await exactPageCount(pdf)) ?? pages
+      // pageRange：模拟 REST 层行为（范围裁剪页数 + 归一化），保持与 POST /api/jobs 同口径
+      let effective = pageCount
+      let pageRange: string | undefined
+      if (opts?.pageRange && opts.pageRange.trim() !== '') {
+        const parsed = parsePageRange(opts.pageRange, pageCount)
+        if (!parsed.ok) throw new ScenarioFailure(`pageRange 无效：${parsed.error}`)
+        pageRange = parsed.normalized ?? undefined
+        effective = parsed.count
+      }
       const job = await ctx.jobs.submit({
         printer,
         pdf,
         fileName: `selftest-${pages}p.pdf`,
-        options: { paperSize: 'A4', colorMode: 'color', duplex: 'none', copies, quality: 'normal' },
+        options: { paperSize: 'A4', colorMode: 'color', duplex: 'none', copies, quality: 'normal', pageRange },
         source: { deviceId: 'ops-selftest', deviceName: 'OPS SelfTest', platform: 'web' },
         test: true,
-        pageCount,
+        pageCount: effective,
       })
       manifest?.jobIds.add(job.id)
       return job
@@ -398,6 +413,12 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
       if (!Number.isInteger(numeric)) return null
       return ctx.vipp.jobState(printerId, numeric)
     },
+    vippJobPageRanges(printerId, backendJobId) {
+      if (!ctx.vipp) return null
+      const numeric = Number(backendJobId)
+      if (!Number.isInteger(numeric)) return null
+      return ctx.vipp.jobPageRanges(printerId, numeric)
+    },
     // ---- 扫描（P3 · eSCL）----
     vscanAvailable() {
       return ctx.vscan !== null
@@ -454,11 +475,13 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
     async httpProbe(method, path, opts) {
       const headers: Record<string, string> = {}
       if (opts?.body !== undefined) headers['content-type'] = 'application/json'
+      if (opts?.bodyBytes) headers['content-type'] = 'application/pdf'
       if (typeof opts?.token === 'string' && opts.token !== '') headers['x-ops-console-token'] = opts.token
+      for (const [k, v] of Object.entries(opts?.headers ?? {})) headers[k] = v
       const res = await fetch(`http://127.0.0.1:${ctx.restPort}${path}`, {
         method,
         headers,
-        body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+        body: opts?.bodyBytes ? new Uint8Array(opts.bodyBytes) : opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
       })
       const bodyText = await res.text()
       let json: { error?: string; code?: string; [k: string]: unknown } | null = null
@@ -468,6 +491,9 @@ export function makeApi(ctx: HostContext, steps: TestStep[], manifest?: RunManif
         json = null
       }
       return { status: res.status, json, bodyText }
+    },
+    trackJob(jobId) {
+      manifest?.jobIds.add(jobId)
     },
     async setConsoleAuth(enabled) {
       if (enabled) await ctx.settings.enableConsoleAuth()

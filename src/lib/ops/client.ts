@@ -187,8 +187,23 @@ export function createOpsClient(port: number) {
       if (!res.ok || !data.job) throw new ApiError(res.status, data.error ?? '提交失败')
       return data.job
     },
+    /** 提交前预检（P11）：与提交同源解析页数，预览与任务记录必然一致；无副作用不建任务 */
+    inspectPdf: async (file: File | Blob): Promise<{ pageCount: number | null; sizeBytes: number }> => {
+      const headers = encodeHeaders({})
+      const res = await fetch(restUrl(port, '/pdf/inspect'), {
+        method: 'POST',
+        headers,
+        body: file,
+      })
+      const data = (await res.json()) as { pageCount?: number | null; sizeBytes?: number; error?: string }
+      if (!res.ok) throw new ApiError(res.status, data.error ?? '预检失败')
+      return { pageCount: data.pageCount ?? null, sizeBytes: data.sizeBytes ?? 0 }
+    },
     cancelJob: (id: string) => request<{ ok: boolean; message: string }>(port, 'POST', `/jobs/${encodeURIComponent(id)}/cancel`),
     retryJob: (id: string) => request<{ ok: boolean; message: string }>(port, 'POST', `/jobs/${encodeURIComponent(id)}/retry`),
+    /** 清理终态任务（completed/failed/cancelled）——记录与磁盘工件一并删除；进行中任务服务端硬保护 */
+    clearFinishedJobs: (states?: string[]) =>
+      request<{ ok: boolean; removed: number; states: string[] }>(port, 'POST', '/jobs/clear', { json: { states } }),
     jobDocumentUrl: (id: string) => restUrl(port, `/jobs/${encodeURIComponent(id)}/document`),
 
     // events

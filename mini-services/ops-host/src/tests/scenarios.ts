@@ -1,6 +1,7 @@
 import type { HostContext } from '../host'
 import type { PrintJob, ScenarioResult, TestStep } from '../core/types'
 import { makeApi, ScenarioFailure, ScenarioSkipped, type ScenarioApi } from './selftest'
+import { makeSamplePdf } from '../pdf/sample'
 import { ippScenarios } from './scenarios-ipp'
 import { scanScenarios } from './scenarios-scan'
 import { pjlScenarios } from './scenarios-pjl'
@@ -36,6 +37,10 @@ import { hpLedmScenarios } from './scenarios-hpledm'
  *
  * 审查迭代轮追加（真实性红线回归守卫）：
  * 21. platform-runtime —— 平台运行时检测完整性（platform 三值合法 / 信号链非空 / 后端可用性说明含运行时检测 / devMode 隔离标记）
+ *
+ * P11 追加（提交前预览 + 队列治理）：
+ * 23. pdf-inspect  —— 提交前 PDF 预检（同源解析/魔数与空体拒绝）+ 页面范围 REST 校验（裁剪页数/归一化/非法 400）
+ * 24. jobs-clear   —— 终态任务清理（记录+磁盘工件删除；进行中硬保护；幂等无操作）
  */
 export type ScenarioId =
   | 'normal-print'
@@ -60,6 +65,8 @@ export type ScenarioId =
   | 'pjl-vendor-probe'
   | 'platform-runtime'
   | 'hp-ledm-vendor-probe'
+  | 'pdf-inspect'
+  | 'jobs-clear'
 
 interface Scenario {
   id: ScenarioId
@@ -372,6 +379,92 @@ const scenarios: Scenario[] = [
       }
       // 5. devMode 隔离标记（自测仅在开发模式可跑：正式模式 403——路由层已验证，这里验证标记一致性）
       api.expect(info.devMode === true, '开发模式下 devMode 应为 true（虚拟设备启用声明）')
+    },
+  },
+  {
+    id: 'pdf-inspect',
+    name: 'PDF 预检与页面范围（提交前预览同源）',
+    description: 'POST /api/pdf/inspect 同源解析页数（与提交后记录一致）+ 魔数/空体拒绝 + 页面范围 REST 校验（裁剪页数/归一化/非法 400）',
+    async run(api) {
+      // ① 预检端点：同源解析（exactPageCount）——预览页数与提交后任务记录必然一致
+      const pdf = await makeSamplePdf(3)
+      const inspect = await api.httpProbe('POST', '/api/pdf/inspect', { bodyBytes: pdf })
+      api.expect(inspect.status === 200, `预检应返回 200（实际 ${inspect.status}）`)
+      api.expect(inspect.json?.pageCount === 3, `3 页文档应解析为 pageCount=3（实际 ${String(inspect.json?.pageCount)}）`)
+      api.expect(inspect.json?.sizeBytes === pdf.length, `sizeBytes 应等于请求体长度（实际 ${String(inspect.json?.sizeBytes)} / 期望 ${pdf.length}）`)
+      api.step('PDF 预检', `同源解析：3 页 / ${pdf.length}B（无副作用，不建任务）`)
+
+      // ② 拒绝路径：非 PDF 魔数 → 415；空体 → 400
+      const notPdf = await api.httpProbe('POST', '/api/pdf/inspect', { bodyBytes: new TextEncoder().encode('not a pdf at all') })
+      api.expect(notPdf.status === 415, `非 PDF 应返回 415（实际 ${notPdf.status}）`)
+      const empty = await api.httpProbe('POST', '/api/pdf/inspect', {})
+      api.expect(empty.status === 400, `空体应返回 400（实际 ${empty.status}）`)
+      api.step('拒绝路径', `非 PDF → ${notPdf.status}，空体 → ${empty.status}`)
+
+      // ③ 页面范围 REST 全链路：真实 POST /api/jobs 提交（3 页文档 × 范围 "2-1, 2" → 归一化 "1-2"）
+      const printer = api.createPrinter('pdf-inspect')
+      const options = encodeURIComponent(JSON.stringify({ paperSize: 'A4', colorMode: 'color', duplex: 'none', copies: 1, quality: 'normal', pageRange: '2-1, 2' }))
+      const submitted = await api.httpProbe('POST', `/api/jobs?printerId=${encodeURIComponent(printer.id)}&fileName=inspect-range.pdf`, {
+        bodyBytes: pdf,
+        headers: { 'x-ops-options': options, 'x-ops-admin': '1' },
+      })
+      api.expect(submitted.status === 201, `范围提交应 201（实际 ${submitted.status}：${String(submitted.json?.error ?? '')}）`)
+      const job = submitted.json?.job as { id?: string; pageCount?: number; sheetsTotal?: number; options?: { pageRange?: string } } | undefined
+      api.expect(!!job?.id, '响应应含 job.id')
+      api.expect(job?.pageCount === 2, `范围 1-2 应将 pageCount 裁剪为 2（实际 ${String(job?.pageCount)}）`)
+      api.expect(job?.sheetsTotal === 2, `1 份×2 页单面应为 2 张（实际 ${String(job?.sheetsTotal)}）`)
+      api.expect(job?.options?.pageRange === '1-2', `范围应归一化为 "1-2"（实际 ${JSON.stringify(job?.options?.pageRange)}）`)
+      if (job?.id) api.trackJob(job.id)
+      api.step('范围提交', `"2-1, 2" → 归一化 "1-2"，页数 3→2，张数 2`)
+
+      // ④ 非法范围 → 400（越界与语法错误各一例）
+      const badRange = encodeURIComponent(JSON.stringify({ paperSize: 'A4', colorMode: 'color', duplex: 'none', copies: 1, quality: 'normal', pageRange: '5-9' }))
+      const outOfRange = await api.httpProbe('POST', `/api/jobs?printerId=${encodeURIComponent(printer.id)}&fileName=x.pdf`, { bodyBytes: pdf, headers: { 'x-ops-options': badRange, 'x-ops-admin': '1' } })
+      api.expect(outOfRange.status === 400, `超文档范围应 400（实际 ${outOfRange.status}）`)
+      api.expect(String(outOfRange.json?.error ?? '').includes('页面范围'), `错误信息应可解释（实际：${String(outOfRange.json?.error)}）`)
+      const badSyntax = encodeURIComponent(JSON.stringify({ paperSize: 'A4', colorMode: 'color', duplex: 'none', copies: 1, quality: 'normal', pageRange: 'abc' }))
+      const invalid = await api.httpProbe('POST', `/api/jobs?printerId=${encodeURIComponent(printer.id)}&fileName=x.pdf`, { bodyBytes: pdf, headers: { 'x-ops-options': badSyntax, 'x-ops-admin': '1' } })
+      api.expect(invalid.status === 400, `非法语法应 400（实际 ${invalid.status}）`)
+      api.step('非法范围拒收', `越界 → 400（${String(outOfRange.json?.error)}），语法错误 → 400`)
+    },
+  },
+  {
+    id: 'jobs-clear',
+    name: '清理终态任务（进行中硬保护）',
+    description: 'POST /api/jobs/clear 删除终态任务记录+磁盘工件；pending 任务不受影响；非终态 states 请求 → 幂等无操作',
+    async run(api) {
+      const printerA = api.createPrinter('jobs-clear-a')
+      const printerB = api.createPrinter('jobs-clear-b')
+      api.condition(printerB, 'offline')
+      const jobA = await api.submit(printerA, 2)
+      const jobB = await api.submit(printerB, 1)
+      const done = await api.waitFor(jobA.id, (j) => j.state === 'completed')
+      await api.sleep(300)
+      api.expect(api.getJob(jobB.id).state === 'pending', '离线打印机的任务应保持 pending（作为「进行中硬保护」对照组）')
+      api.step('预备', `jobA 已完成（${done.printedSheets} 张），jobB 保持 pending（打印机离线）`)
+
+      const cleared = await api.httpProbe('POST', '/api/jobs/clear', { body: {} })
+      api.expect(cleared.status === 200, `清理应返回 200（实际 ${cleared.status}）`)
+      api.expect((cleared.json?.removed as number) >= 1, `removed 应 ≥ 1（实际 ${String(cleared.json?.removed)}）`)
+      const afterA = await api.httpProbe('GET', `/api/jobs/${encodeURIComponent(jobA.id)}`)
+      api.expect(afterA.status === 404, `终态任务应已删除（实际 ${afterA.status}）`)
+      const afterB = await api.httpProbe('GET', `/api/jobs/${encodeURIComponent(jobB.id)}`)
+      api.expect(afterB.status === 200, `进行中任务不应被清理（实际 ${afterB.status}）`)
+      api.step('清理', `removed=${String(cleared.json?.removed)}，jobA → 404，jobB 仍在队列`)
+
+      // 非终态 states 请求 → 服务端硬保护（幂等无操作，不报错）
+      const guard = await api.httpProbe('POST', '/api/jobs/clear', { body: { states: ['pending', 'processing'] } })
+      api.expect(guard.status === 200 && guard.json?.removed === 0, `请求非终态 states 应幂等无操作（实际 ${guard.status}/${String(guard.json?.removed)}）`)
+      const stillB = await api.httpProbe('GET', `/api/jobs/${encodeURIComponent(jobB.id)}`)
+      api.expect(stillB.status === 200, '硬保护下 pending 任务仍应存在')
+
+      // 幂等：无终态任务时重复清理 → removed=0（前置：上一轮刚清空）
+      const again = await api.httpProbe('POST', '/api/jobs/clear', { body: {} })
+      api.expect(again.json?.removed === 0, `无终态任务时重复清理应 removed=0（实际 ${String(again.json?.removed)}）`)
+
+      // 收尾：恢复在线让 jobB 完成（run 结束时随清单清理）
+      api.condition(printerB, 'online')
+      await api.waitFor(jobB.id, (j) => j.state === 'completed')
     },
   },
 ]

@@ -103,6 +103,8 @@ export interface VippJobRecord {
   media: string
   colorMode: string
   quality: number
+  /** 提交方请求的页面范围（IPP page-ranges，闭区间对；null = 未携带） */
+  pageRanges?: Array<[number, number]> | null
   sizeBytes: number
   /** 总印数（页 × 份数） */
   impressionsTotal: number
@@ -499,6 +501,13 @@ export class VirtualIppServer {
     return this.printers.get(printerId)?.findJob(jobId)?.state ?? null
   }
 
+  /** 测试辅助：读取任务记录的 page-ranges（验证 IPP 转发链路；null = 未携带或任务不存在） */
+  jobPageRanges(printerId: string, jobId: number): Array<[number, number]> | null {
+    const job = this.printers.get(printerId)?.findJob(jobId)
+    if (!job) return null
+    return job.pageRanges ?? null
+  }
+
   /** 注入/清除打印机条件（演示 printer-state-reasons：media-needed 等） */
   async setCondition(printerId: string, condition: VippCondition): Promise<VippPrinterSnapshot | null> {
     const printer = this.printers.get(printerId)
@@ -664,6 +673,16 @@ export class VirtualIppServer {
     const media = attrStr(findIn(jobGroup, 'media')) ?? 'A4'
     const colorMode = attrStr(findIn(jobGroup, 'print-color-mode')) ?? 'color'
     const quality = attrInt(findIn(jobGroup, 'print-quality')) ?? 4
+    // page-ranges（1setOf rangeOfInteger）：每个 8 字节值 = [min,max]；缺失 → null（不猜测）
+    const pageRangesAttr = findIn(jobGroup, 'page-ranges')
+    const pageRanges: Array<[number, number]> | null = pageRangesAttr
+      ? pageRangesAttr.values
+          .filter((v) => v.data.length === 8)
+          .map((v) => {
+            const view = new DataView(v.data.buffer, v.data.byteOffset, v.data.byteLength)
+            return [view.getInt32(0, false), view.getInt32(4, false)] as [number, number]
+          })
+      : null
 
     const pageCount = (await exactPageCount(pdf)) ?? 1
     const safeCopies = Math.max(1, Math.min(999, copies))
@@ -680,6 +699,7 @@ export class VirtualIppServer {
       media,
       colorMode,
       quality,
+      pageRanges,
       sizeBytes: pdf.length,
       impressionsTotal: Math.max(1, pageCount * safeCopies),
       impressionsCompleted: 0,
@@ -968,6 +988,7 @@ function jobAttributes(job: VippJobRecord, printerUri: string): EncAttr[] {
     attr.integer('job-media-sheets-completed', job.sheetsCompleted),
   ]
   if (job.error) out.push(attr.text('job-state-message', job.error))
+  if (job.pageRanges) out.push(attr.ranges('page-ranges', job.pageRanges))
   return out
 }
 

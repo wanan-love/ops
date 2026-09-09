@@ -330,7 +330,7 @@ export const JOB_STATE_LABEL: Record<JobState, string> = {
   cancelled: '已取消',
 }
 
-export const OPS_VERSION = '0.4.8'
+export const OPS_VERSION = '0.4.9'
 
 export const BACKEND_LABEL: Record<BackendKind, string> = {
   mock: 'Mock · 虚拟打印机',

@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Download, FileText, History, ListFilter, RotateCcw, Sheet, X } from 'lucide-react'
+import { Download, FileText, History, ListFilter, RotateCcw, Sheet, Trash2, X } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,6 +53,24 @@ export function QueueView() {
     return c
   }, [jobs])
 
+  /** 终态任务数（可被「清理已完成」删除；进行中任务服务端硬保护） */
+  const terminalCount = (counts.completed ?? 0) + (counts.failed ?? 0) + (counts.cancelled ?? 0)
+  const [clearing, setClearing] = useState(false)
+
+  const clearFinished = async () => {
+    setClearing(true)
+    try {
+      const r = await client.clearFinishedJobs()
+      toast.success(r.removed > 0 ? `已清理 ${r.removed} 个任务` : '没有可清理的任务', {
+        description: r.removed > 0 ? '已完成/失败/已取消任务的记录与 PDF 工件已删除；进行中任务不受影响' : undefined,
+      })
+    } catch (e) {
+      toast.error('清理失败', { description: (e as Error).message })
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const cancel = async (job: PrintJob) => {
     try {
       const r = await client.cancelJob(job.id)
@@ -80,6 +109,42 @@ export function QueueView() {
               完成 {counts.completed ?? 0}
             </Badge>
             <Badge variant="secondary" className="border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400">失败 {counts.failed ?? 0}</Badge>
+            {/* 清理终态任务（P11）：确认后删除记录+磁盘工件；进行中任务服务端硬保护 */}
+            {terminalCount > 0 && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-1 h-8 gap-1.5 border-border/60 text-muted-foreground transition-colors duration-200 hover:border-destructive/40 hover:text-destructive min-h-11 sm:min-h-8"
+                    disabled={clearing}
+                    aria-label={`清理 ${terminalCount} 个已完成/失败/已取消任务`}
+                  >
+                    <Trash2 className="size-3.5" aria-hidden />
+                    清理已完成
+                    <Badge variant="secondary" className="ml-0.5 px-1.5">{terminalCount}</Badge>
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>清理 {terminalCount} 个已完成任务？</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      将永久删除已完成 / 失败 / 已取消任务的队列记录与原始 PDF 工件（释放磁盘空间）。进行中任务（排队 / 打印 / 暂停）不受影响，此操作不可撤销。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="min-h-11 sm:min-h-9">取消</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="min-h-11 bg-destructive text-white hover:bg-destructive/90 sm:min-h-9"
+                      onClick={() => void clearFinished()}
+                    >
+                      <Trash2 className="size-3.5" aria-hidden />
+                      确认清理
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-3">

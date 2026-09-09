@@ -2,7 +2,7 @@
 
 > 跨平台局域网共享打印机 — 设备 A 安装 Host 共享系统打印机，Windows / macOS / Linux / Android / iOS 设备自动发现并打印。
 
-[![Release](https://img.shields.io/badge/release-v0.4.8--cross--platform-emerald)](../../releases)
+[![Release](https://img.shields.io/badge/release-v0.4.9--cross--platform-emerald)](../../releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
 [![Backend](https://img.shields.io/badge/print%20backends-IPP%20%7C%20CUPS%20%7C%20Windows-teal)](#打印后端)
 [![Self-Test](https://img.shields.io/badge/self--test-22%2F22%20scenarios%20passing-brightgreen)](#开发与测试环境mock--virtual)
@@ -27,6 +27,7 @@ Client(发现 Host) → 浏览共享打印机 → 提交 PDF
 - **多品牌官方驱动逆向（P8 · v0.4.6）**：自主检索并下载四品牌官方 Linux 驱动逆向——**Brother** hll2350dwpdrv 4.0.0（PJL 流 UEL+@PJL SET OUTBIN 官方实证；**安装器网络默认 lpd://IP/BINARY_P1 修正「默认 9100」口径**；Throughput=18 真实声明 + InputSlot/Duplex/4 档分辨率）；**HP** HPLIP 3.26.4 源码（hpmud 9100/9101/9102 通道表 + PML→RFC 3805 OID + **LEDM XML /CDM JSON 本机 HTTP 端点新发现**）；**Canon** cnijfilter2 6.90（**Cnmpu2_port9100 + BJNP UDP 8611 + ivec XML GetStatus/Cleaning + HTTP /canon/ij/command\***）；**Lexmark** inkjet-08（NPA 私有协议 + host-based）；Kyocera 下载中心纯 JS 诚实未获取；证据归档 `docs/vendor-evidence/`（MULTI_BRAND_DRIVERS_ANALYSIS.md + 四包/源文件）
 - **HP LEDM/CDM Vendor Adapter（P9 · v0.4.7）**：基于 P8 归档 HPLIP 源码实证通道的第二个 Vendor Adapter 落地——双通道只读 HTTP 探测：**LEDM :8080** XML 三文档（ProductStatusDyn 状态 / ConsumableConfigDyn 四色墨 / MediaHandlingDyn 纸盒+autoDuplexor，命名空间剥除对齐 HPLIP 官方解析）+ **CDM :80** JSON（suppliesPublic suppliesList）；新增耗材/纸盒/双面器/状态四类 VENDOR_API 回读；通道优先级 IPP→SNMP→PJL→HP（逐层守卫不覆盖）；默认关闭需显式启用；Virtual HP LEDM/CDM Printer :3068 仿真（含 namespaced/bare/404 三风格宽容解析验证）+ 场景 22 hp-ledm-vendor-probe（404→UNKNOWN 兕底红线回归）；真实 HP 机型响应细节仍以实测为准（无真机不宣称）
 - **发布链路修复与加固（P9.1 · v0.4.8）**：CI smoke test 修复（正式模式 403 红线回归 → `OPS_DEV_MODE=1` 隔离测试环境启动 + 全量 22 场景严格断言替代弱 grep）；Release 多平台链路加固——Android Gradle Wrapper 8.7 入仓（runner 无全局 gradle 必败点）+ APK 版本号单一来源注入（`-PopsVersion/-PopsVersionCode`，产物命名 arm64→**universal** 真实化）；iOS xcarchive 目录树打单 zip 上传（避免 Release 附件平铺污染）；打包产物冒烟验证（93MB 单文件：正式模式零虚拟设备 + 内嵌 Web 控制台 + REST/WS + mDNS 全链路）
+- **提交前预览与队列治理（P11 · v0.4.9）**：打印页新增「提交前预览」面板（页数/份数/张数预估/纸张色彩，`POST /api/pdf/inspect` 与提交同源解析——预览页数与提交后任务记录必然一致）；页面范围全链路诚实化（本地内联校验 + REST 提前 400 拒收 + `job.pageCount` 裁剪为实际打印页数 + IPP `page-ranges` RFC 8011 标准属性转发 + CUPS `lp -o page-ranges`）；队列新增「清理已完成」管理操作（终态任务记录+PDF 工件一并删除、进行中任务服务端硬保护、AlertDialog 确认 + WS 快照实时刷新）；自测 +2 场景（23 pdf-inspect / 24 jobs-clear）
 - **客户端尽量无需安装厂商驱动**，实际打印使用 Host（设备 A）上已安装的系统打印机与驱动
 - 切换真实打印机时，仅替换 Printer Backend，**Core / 协议 / 队列 / UI 零改动**
 
@@ -295,6 +296,7 @@ docker compose up -d        # web :3000 + host :3001/:3002 + caddy 网关 :80
 - [x] 20. 多品牌官方驱动逆向（P8 · v0.4.6：Brother/HP/Canon/Lexmark 四包官方 Linux 驱动自主检索下载逆向；PJL 官方背书 + Brother LPD BINARY_P1 默认口径修正 + HP LEDM/CDM HTTP 端点新发现 + Canon 9100/BJNP8611/ivec XML 实证 + Lexmark NPA 实证；新增 HP LEDM/CDM 与 Canon ivec 两个 Vendor Adapter 候选；证据归档 `docs/vendor-evidence/MULTI_BRAND_DRIVERS_ANALYSIS.md`）
 - [x] 21. HP LEDM/CDM Vendor Adapter（P9 · v0.4.7：LEDM :8080 XML 三文档 + CDM :80 JSON 双通道只读探测落地；耗材/纸盒/双面器/状态四类 VENDOR_API 回读；IPP→SNMP→PJL→HP 逐层守卫；Virtual LEDM :3068 + 场景 22 全链路自测含 404→UNKNOWN 兕底回归；真实机型响应以实测为准）
 - [x] 22. 发布链路修复与加固（P9.1 · v0.4.8：CI smoke test OPS_DEV_MODE=1 + 22 场景严格断言；Android Gradle Wrapper 8.7 入仓 + 版本单一来源注入 + universal 命名真实化；iOS xcarchive 单 zip；打包产物本地冒烟——正式模式 + 内嵌 Web + mDNS 全链路 200）
+- [x] 23. 提交前预览与队列治理（P11 · v0.4.9：/api/pdf/inspect 同源页数预检 + 预览面板（页/份/张/纸色）；页面范围全链路（内联校验/REST 400/pageCount 裁剪/IPP page-ranges 转发/CUPS lp 选项）+ 归一化；/api/jobs/clear 终态清理（工件删除+硬保护+幂等）+ 队列 UI 清理按钮；自测 24 场景（+pdf-inspect/jobs-clear））
 - [ ] 13. 真实硬件验证（CUPS 宿主 / Windows 宿主 / SNMP 实际墨量 / 跨主机 mDNS / ipps TLS 真机证书校验 / eSCL 真实扫描仪 / PJL 真机 SUPPLY 格式抓包适配）
 - [ ] 14. 厂商专用能力（协议对比研究已完成：[docs/VENDOR_PROTOCOLS.md](docs/VENDOR_PROTOCOLS.md) —— 结论：标准五通道覆盖约 90% 常见需求，缺口集中在耗材长尾；Vendor Adapter 按「只提升 UNKNOWN、绝不覆盖 SUPPORTED」渐进补齐；P4 PJL ✔ v0.4.2 首个试点落地）
 

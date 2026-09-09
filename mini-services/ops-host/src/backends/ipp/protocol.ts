@@ -247,6 +247,10 @@ export const attr = {
     w.bytes(int32(min)).bytes(int32(max))
     return { tag: TAG_RANGE, name, values: [w.build()] }
   },
+  /** 1setOf rangeOfInteger（如 page-ranges：RFC 8011 § multiple values per attribute） */
+  ranges(name: string, pairs: Array<[number, number]>): EncAttr {
+    return { tag: TAG_RANGE, name, values: pairs.map(([min, max]) => { const w = new Writer(); w.bytes(int32(min)).bytes(int32(max)); return w.build() }) }
+  },
   resolution(name: string, x: number, y: number, unit: 3 | 4 = 3): EncAttr {
     const w = new Writer()
     w.bytes(int32(x)).bytes(int32(y)).u8(unit)
