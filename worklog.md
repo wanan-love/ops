@@ -762,3 +762,37 @@ Stage Summary:
 - clear-test-data 不清 job 工件 → 可补一个「清理已完成任务」管理操作（正式产品需要）
 - bun --watch 不响应 mtime-only touch（运维备忘更新：重启 host 用 kill + 标准启动命令）
 - 下一阶段：VENDOR_RESEARCH §5 HP 私有 MIB 或继续 UX 打磨（打印预览）
+
+---
+Task ID: P11
+Agent: main-agent
+Task: 用户指令「继续审查和迭代」→ 提交前预览 + 页面范围全链路诚实化 + 队列治理（上轮 P10 走查的观察项落地）
+
+Work Log:
+- 【基线】lint 0 / 双服务存活 / CI 双绿 / git 干净（9e89faa）；发现 cron 任务再次被系统清除（列表为空）→ 本轮重建
+- 【QA 现状】agent-browser 确认 P10 修复全部生效（指标 hint「共 3 台·3 台在线」/快速开始已连接态重排）；零 console error
+- 【方案决策】打印预览的页数口径：为避免 P10 同类「预览与实际不一致」问题，新增 POST /api/pdf/inspect 与提交共用 exactPageCount 同源解析——预览页数与提交后任务记录必然一致；pageRange 此前仅存档（mock 引擎不应用、IPP/CUPS 不转发）→ 预览若按范围算即说谎 → 本轮做全链路诚实化
+- 【实现·host】
+  - src/core/pagerange.ts：区间算术解析器（越界裁剪 IPP 语义/归一化去重合并/O(段数) 无内存风险——QA 前自查发现「逐页展开 Set + MAX_SAFE_INTEGER 会内存爆炸」已改为区间求交）
+  - POST /api/pdf/inspect（无副作用预检）；POST /api/jobs 提交时 range 提前验证（非法 400/页数不可解析 422）+ pageCount 裁剪为实际打印页数 + normalized 归一化存档
+  - POST /api/jobs/clear：终态任务（completed/failed/cancelled）记录+磁盘工件一并删除；进行中任务服务端硬保护（请求 states 与终态集求交）；快照广播+事件日志
+  - IPP 转发：protocol.ts 新增 attr.ranges（1setOf rangeOfInteger）；client.ts Print-Job 携带 page-ranges；CUPS lp -o page-ranges；vipp 记录 pageRanges + Get-Job-Attributes 回显 + jobPageRanges 测试辅助
+- 【实现·前端】src/lib/ops/pagerange.ts（孪生解析器）；client.ts inspectPdf/clearFinishedJobs；print-view 预览面板（页数/份数/张数预估/纸张色彩 + 范围归一化提示 + 内联校验错误 + 提交按钮联动禁用）；queue-view「清理已完成」按钮（计数徽章 + AlertDialog 确认 + destructive 主题）
+- 【自测扩展】httpProbe 支持 bodyBytes/自定义头；submit 支持 pageRange opts；trackJob 纳管 httpProbe 提交的任务；新场景 23 pdf-inspect（预检同源/415/400/范围裁剪/归一化/非法 400×2）+ 24 jobs-clear（终态删除/进行中硬保护/幂等）；ipp-full-flow 加 page-ranges 转发断言（注意 vipp printerId 口径是 'vipp-full' 键而非导入 printer.id——首跑失败定位）
+- 【QA 发现并修复 2 个问题】
+  ① P0 无限重渲染崩溃：useOpsClient() 每渲染返回新对象作 useEffect 依赖 → setState 循环 → Maximum update depth exceeded（点示例文档即崩）→ 改依赖稳定 restPort 原始值 + effect 内 createOpsClient
+  ② 页数显示「1 / 共 2 页 页」尾字重复 → 条件渲染修复
+- 【验收】lint 0；全量自测 24/24（tr-mttq19r4-7732，含 2 个新场景）；agent-browser 端到端：示例文档→预览面板（2页/3份/双面→张数联动 6→3）→范围 1（1/共2页·≈2张·归一化）→非法 5（红字+禁用+按钮文案）→提交（toast「1 页 × 3 份 ≈ 2 张」与预览完全一致）→队列记录 1页×3份·双面（服务端范围生效）→清理按钮（徽章 1）→确认→toast+列表清空+按钮消失；双视口 1280/393 零溢出；深色模式面板正常；零 console error
+- 【QA 清理】本轮提交的 job 即被清理功能删除（真实链路验证）；种子态 3 台/0 任务；主题恢复浅色
+- 【版本】v0.4.8 → v0.4.9 四处单一来源 + README 特性清单 P11 条目 + checklist 第 23 项；推送 583fa69
+
+Stage Summary:
+- 交付：P10 走查观察项全部落地——打印页从「提交后才知道页数张数」到「提交前预览面板 + 范围实时校验」；队列从「终态任务永久堆积」到「一键治理」
+- 工程原则实证：①预览与权威数据必须同源（否则就是下一个 92.5% vs 93%）②「仅存档的选项」要么全链路生效要么不展示承诺——pageRange 从存档字段升级为 IPP/CUPS/mock 三后端一致生效的能力
+- 自测基建增强：httpProbe 二进制体能力 → REST 层行为（校验/新端点）可被场景化验证
+
+未解决问题或风险与下一步优先建议:
+- Windows 后端（Start-Process -Verb PrintTo）不支持任何打印选项（份数/双面/范围均走驱动默认）——v0.4.3 起已有代码注释与文档化边界，pageRange 同样适用；后续若接 Windows 打印 API（Win32 spooler JOB_INFO）可一并解决
+- 页数不可解析（pdf-lib 失败）+ 设置了范围的提交被 422 拒绝——极罕见（构造损坏 PDF），错误信息已引导去掉范围提交
+- 首次失败 run 的测试资源按设计保留（供排查）→ 本地开发环境跑挂自测后需手动 clear-test-data；可考虑「失败 run 资源 N 分钟后自动过期」（下轮候选）
+- 下一阶段：VENDOR_RESEARCH §5 HP 私有 MIB（LASERJET-COMMON-MIB）→ Lexmark MIB；或继续 UX 打磨（打印页 PDF 首页缩略图预览——需 pdf.js，成本高收益中，待评估）
